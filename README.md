@@ -1,0 +1,3 @@
+# Compositional Image Generation with Lexicon Filters
+
+See [main.py][main.py] for now...

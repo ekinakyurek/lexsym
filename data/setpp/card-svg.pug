@@ -1,0 +1,58 @@
+doctype xml
+svg(xmlns="http://www.w3.org/2000/svg"
+    xmlns:xlink="http://www.w3.org/1999/xlink"
+    version="1.1"
+    height="260"
+    width="260")
+  metadata(xmlns:set='https://github.com/hildjj/set-game')
+  rect( x="5"
+        y="5"
+        height="250"
+        width="250"
+        rx="10"
+        ry="10"
+        fill="white"
+        stroke="grey"
+        stroke-width="2")
+  - for (let i=0; i<objs.length; i+=1) {
+    defs
+      - let obj = objs[i]
+      - let fill = obj.fill
+      case obj.fill
+        when 'Hatched'
+          pattern(id="hatch"+i width="5" height="3" patternUnits="userSpaceOnUse")
+            line(x1="0" y1="0" x2="0" y2="10" stroke-width="2" class='setcolor'+i)
+          - fill = 'url(#hatch'+i+')'
+        when 'Solid'
+          - fill = obj.color
+        when 'Open'
+          - fill = 'white'
+      case obj.shape
+        when 'Squiggle'
+          path(id="shape"+i class="setcolor" + i + " setline" + i
+               d="m 33,180 c 6,-13 11,-23 26,-28 15,-5 31,-1 58,7 23,7 36,0 43,-3 7,-4 17,-9 30,-9 13,0 18,21 12,33 -5,11 -14,23 -26,28 -12,5 -32,1 -59,-7 -17,-5 -29,-3 -42,3 -9,4 -18,10 -30,9 -13,0 -19,-18 -12,-33 z")
+        when 'Diamond'
+          polygon(id="shape"+i class="setcolor" + i + " setline" + i
+                  points="30,180 117,145 205,180 117,215")
+        when 'Pill'
+          rect(id="shape"+i class="setcolor" + i + " setline" + i
+               x="30" y="145"
+               width="175" height="70"
+               rx="35")
+      style(type="text/css").
+        .setcolor#{i}{
+          stroke: #{obj.color};
+          fill: #{fill};
+        }
+        .setline#{i}{
+          stroke-width: 4;
+          stroke-linejoin: round;
+        }
+    case objs.length
+        when 1
+            use(x="15",y=-55, xlink:href="#shape"+i)
+        when 2
+            use(x="15",y=-110+i*120, xlink:href="#shape"+i)
+        when 3
+            use(x="15",y=-135+i*80, xlink:href="#shape"+i)
+  - }
