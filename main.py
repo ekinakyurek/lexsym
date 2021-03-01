@@ -18,20 +18,19 @@ from data.set import SetDataset
 from torchvision.utils import make_grid, save_image
 import itertools
 import pdb
-print("Im here")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(device)
+print("DEVICE: ", device)
 
-def train_lexgen(data="Shapes"):
-    if data == "Set++":
-        train  = SetDataset("data/set++/", split="train")
-        test   = SetDataset("data/set++/", split="test", transform = train.transform, vocab = train.vocab)
+def train_lexgen(datatype="Shapes"):
+    if datatype == "Set++":
+        train  = SetDataset("data/setpp/", split="train")
+        test   = SetDataset("data/setpp/", split="test", transform = train.transform, vocab = train.vocab)
     else:
         train  = ShapeDataset(root="data/shapes/", split="train")
         test   = ShapeDataset(root="data/shapes/", split="test", transform = train.transform, vocab = train.vocab)
 
-    loader = torch_data.DataLoader(train, batch_size=64, collate_fn=train.collate)
-    test_loader = torch_data.DataLoader(test, batch_size=32, collate_fn=train.collate)
+    loader = DataLoader(train, batch_size=64, collate_fn=train.collate)
+    test_loader = DataLoader(test, batch_size=32, collate_fn=train.collate)
 
     model = FilterModel(
         vocab=train.vocab,
@@ -128,17 +127,19 @@ def render_html(visualizations):
 
 
 
-def train_vqvae(datatype="Set++"):
-    batch_size = 256
-    num_training_updates = 15000
-    dim = 8
-    num_residual_hiddens = 8
-    embedding_dim=8
+def train_vqvae(datatype="Shapes"):
+    batch_size = 128
+    num_training_updates = 10000
+    dim = 16
+    num_residual_hiddens = 16
+    embedding_dim=16
     K = 16
     commitment_cost = 0.25
     decay = 0.99
     learning_rate = 1e-3
     epsilon=1e-5
+    print(datatype)
+
     if datatype == "Set++":
         train  = SetDataset("data/setpp/", split="train")
         test   = SetDataset("data/setpp/", split="test", transform=train.transform, vocab=train.vocab)
@@ -213,6 +214,8 @@ def evaluate_vqvae(model,loader):
     return np.mean(val_res_recon_error), np.mean(val_res_perplexity)
 
 
-if __name__ == "main":
-    # train_lexgen()
-    train_vqvae()
+if __name__ == "__main__":
+    # train_vqvae(datatype="Set++")
+    # train_lexgen(datatype="Shapes")
+    # train_vqvae(datatype="Shapes")
+    train_lexgen(datatype="Set++")
