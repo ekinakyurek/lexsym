@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from src.lex import FilterModel
 from src.vqvae import VectorQuantizedVAE
-
+from src.vae import VAE
 from data.shapes import ShapeDataset
 from data.set import SetDataset
 
@@ -35,7 +35,7 @@ def train_lexgen(datatype="Shapes"):
     model = FilterModel(
         vocab=train.vocab,
         n_downsample=2,
-        n_latent=128,
+        n_latent=32,
         n_steps=10
     ).cuda()
 
@@ -127,9 +127,9 @@ def render_html(visualizations):
 
 
 
-def train_vqvae(datatype="Shapes"):
+def train_vae(datatype="Shapes", modeltype="VQVAE"):
     batch_size = 128
-    num_training_updates = 10000
+    num_training_updates = 15000
     dim = 16
     num_residual_hiddens = 16
     embedding_dim=16
@@ -151,18 +151,21 @@ def train_vqvae(datatype="Shapes"):
     loader = DataLoader(train, batch_size=batch_size, shuffle=True, collate_fn=train.collate, pin_memory=True)
     test_loader = DataLoader(test, batch_size=32, shuffle=True,collate_fn=train.collate, pin_memory=True)
 
-    model = VectorQuantizedVAE(3, dim, embedding_dim, train.std,
-                               K=K,
-                               cc=commitment_cost,
-                               decay=decay,
-                               epsilon=epsilon).to(device)
+    if modeltype == "VQVAE":
+        model = VectorQuantizedVAE(3, dim, embedding_dim,
+                                   K=K,
+                                   cc=commitment_cost,
+                                   decay=decay,
+                                   epsilon=epsilon).to(device)
+    else:
+        model = VAE(3, dim, embedding_dim).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=False)
 
     train_res_recon_error = []
-    train_res_perplexity = []
+    # train_res_perplexity = []
     validation_res_recon_error = []
-    validation_res_perplexity = []
+    # validation_res_perplexity = []
 
     model.train()
     iterator = itertools.cycle(iter(loader))
@@ -170,52 +173,56 @@ def train_vqvae(datatype="Shapes"):
         (_, img) = next(iterator)
         img = img.to(device)
         optimizer.zero_grad()
-        loss,_, recon_error, perplexity, *_ = model(img)
+        loss, _, recon_error, *_ = model(img)
         loss.backward()
         optimizer.step()
 
         train_res_recon_error.append(recon_error.item())
-        train_res_perplexity.append(perplexity.item())
+        # train_res_perplexity.append(perplexity.item())
 
         if (i+1) % 100 == 0:
             with torch.no_grad():
                 print('%d iterations' % (i+1))
                 print('recon_error: %.6f' % np.mean(train_res_recon_error[-100:]))
-                print('perplexity: %.6f' % np.mean(train_res_perplexity[-100:]))
+                # print('perplexity: %.6f' % np.mean(train_res_perplexity[-100:]))
                 print(len(test_loader))
-                val_recon, val_perp = evaluate_vqvae(model, test_loader)
+                val_recon = evaluate_vqvae(model, test_loader)
                 validation_res_recon_error.append(val_recon)
-                validation_res_perplexity.append(val_perp)
+                # validation_res_perplexity.append(val_perp)
                 test_iter = itertools.cycle(iter(test_loader))
                 for j in range(5):
                     _, img = next(test_iter)
-                    loss, recon, recon_error, perplexity, *_= model(img.to(device))
+                    loss, recon, recon_error, *_= model(img.to(device))
                     recon = recon.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
                     recon = torch.clip(recon,0,1)
                     img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
                     img   = torch.clip(img,0,1)
-                    if i == num_training_updates - 1:
+                    if (i+1) % 500 == 0:
                         save_image(make_grid(recon),f"vis/vqvae_{i}_{j}.png")
                         save_image(make_grid(img),f"vis/img_{i}_{j}.png")
 
 def evaluate_vqvae(model,loader):
     val_res_recon_error = []
-    val_res_perplexity = []
+    # val_res_perplexity = []
+    model.eval()
     for (_, img) in loader:
         img = img.to(device)
-        loss, data_recon, recon_error, perplexity, *_= model(img)
+        loss, data_recon, recon_error, *_= model(img)
         val_res_recon_error.append(recon_error.item())
-        val_res_perplexity.append(perplexity.item())
+        # val_res_perplexity.append(perplexity.item())
 
 
     print('val recon_error: %.6f' % np.mean(val_res_recon_error))
-    print('val perplexity: %.6f' % np.mean(val_res_perplexity))
+    # print('val perplexity: %.6f' % np.mean(val_res_perplexity))
     print()
-    return np.mean(val_res_recon_error), np.mean(val_res_perplexity)
+    model.train()
+    return np.mean(val_res_recon_error)
 
 
 if __name__ == "__main__":
-    # train_vqvae(datatype="Set++")
+    train_vae(datatype="Set++",modeltype="VQVAE")
     # train_lexgen(datatype="Shapes")
-    # train_vqvae(datatype="Shapes")
-    train_lexgen(datatype="Set++")
+    # train_vae(datatype="Shapes",modeltype="VQVAE")
+    #train_lexgen(datatype="Set++")
+    #train_vae(datatype="Set++",modeltype="VAE")
+    #train_vae(datatype="Shapes",modeltype="VAE")
