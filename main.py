@@ -16,6 +16,7 @@ from src.dae import DAE
 
 from data.shapes import ShapeDataset
 from data.set import SetDataset
+from data.scan import SCANDataset
 
 import torchvision
 from torchvision.utils import make_grid, save_image
@@ -147,9 +148,13 @@ def train_vae(datatype="Shapes", modeltype="VQVAE"):
     if datatype == "Set++":
         train  = SetDataset("data/setpp/", split="train")
         test   = SetDataset("data/setpp/", split="test", transform=train.transform, vocab=train.vocab)
-    else:
+    elif datatype == "Shapes":
         train  = ShapeDataset("data/shapes/",split="train")
         test   = ShapeDataset("data/shapes/",split="test", transform=train.transform, vocab=train.vocab)
+    else:
+        train  = SCANDataset("data/scan/",split="train")
+        test   = SCANDataset("data/scan/",split="test", transform=train.transform, vocab=train.vocab)
+
 
 
     loader = DataLoader(train, batch_size=batch_size, shuffle=True, collate_fn=train.collate, pin_memory=True)
@@ -230,8 +235,9 @@ def evaluate_vqvae(model,loader):
 
 if __name__ == "__main__":
     #train_vae(datatype="Set++",modeltype="DAE")
-    #train_vae(datatype="Set++",modeltype="VQVAE")
-    train_lexgen(datatype="Shapes")
+    train_vae(datatype="Set++",modeltype="VQVAE")
+    #train_vae(datatype="SCAN",modeltype="VQVAE")
+    #train_lexgen(datatype="Shapes")
     #train_vae(datatype="Shapes",modeltype="VQVAE")
     #train_lexgen(datatype="Set++")
     #train_vae(datatype="Set++",modeltype="VAE")

@@ -11,7 +11,7 @@ class DAE(nn.Module):
         super().__init__()
         self.encdims = [input_dim, *encdims]
         self.decdims = [*decdims, input_dim]
-        
+
         self.down_blocks = []
         for in_layer,out_layer in zip(self.encdims,self.encdims[1:]):
             self.down_blocks.append(nn.Conv2d(in_layer,out_layer,4,stride=2,padding=1))
@@ -19,7 +19,7 @@ class DAE(nn.Module):
 
         self.encoder=nn.Sequential(*self.down_blocks,
                                     nn.Flatten(),
-                                    nn.Linear(4 * 4 * self.encdims[-1], latentdim)
+                                    nn.Linear(4 * 4 * self.encdims[-1], latentdim) #FIXME: Here 4x4 is function of input H-W
                                    )
 
         self.up_blocks = []
