@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -10,3 +11,12 @@ def weights_init(m):
             m.bias.data.fill_(0)
         except AttributeError:
             print("Skipping initialization of ", classname)
+
+
+class View(nn.Module):
+    def __init__(self, *shape):
+        super().__init__()
+        self.shape = shape,  # extra comma
+
+    def forward(self, x):
+        return x.view(*self.shape)

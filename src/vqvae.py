@@ -2,40 +2,54 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .utils import weights_init
-import pdb
+
 class VectorQuantizedVAE(nn.Module):
     def __init__(self, input_dim, dim, edim, K=16, cc=0.25, decay=0.99, epsilon=1e-5):
         super().__init__()
 
         self.encoder = nn.Sequential(
-            nn.Conv2d(input_dim, dim , 4, 2, 1), #nn.BatchNorm2d(dim),
-            nn.ReLU(True),
-            nn.Conv2d(dim, 2*dim, 4, 2, 1), #nn.BatchNorm2d(2*dim),
-            nn.ReLU(True),
-            nn.Conv2d(2*dim, 2*dim, 3, 1, 1), #nn.BatchNorm2d(2*dim),
-            nn.ReLU(True),
+            nn.Conv2d(input_dim, dim , 4, 2, 1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(dim, 2*dim, 4, 2, 1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(2*dim, 2*dim, 4, 2, 1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(2*dim, 2*dim, 3, 1, 1),
+            nn.LeakyReLU(0.2),
             ResBlock(2*dim, dim // 2),
             ResBlock(2*dim, dim // 2),
-            nn.Conv2d(2*dim, edim, 1, 1),
+            nn.Conv2d(2*dim, 2*edim, 1, 1),
         )
 
-        self.codebook = VectorQuantizerEMA(K, edim,  cc=cc, decay=decay, epsilon=epsilon)
+        self.codebook1 = VectorQuantizerEMA(K, edim,  cc=cc, decay=decay, epsilon=epsilon)
+
+        self.codebook2 = VectorQuantizerEMA(K, edim,  cc=cc, decay=decay, epsilon=epsilon)
 
         self.decoder = nn.Sequential(
-            nn.Conv2d(edim, 2*dim, 3, 1, 1), #nn.BatchNorm2d(2*dim),
-            nn.ReLU(True),
+            nn.Conv2d(edim, 2*dim, 3, 1, 1),
+            nn.LeakyReLU(0.2),
             ResBlock(2*dim, dim // 2),
             ResBlock(2*dim, dim // 2),
-            nn.ConvTranspose2d(2*dim, dim, 4, 2, 1), #nn.BatchNorm2d(dim),
-            nn.ReLU(True),
-            nn.ConvTranspose2d(dim, input_dim, 4, 2, 1),
+            nn.UpsamplingNearest2d(scale_factor=2),
+            nn.Conv2d(2*dim, dim, 4, 1, 2),
+            nn.LeakyReLU(0.2),
+            nn.UpsamplingNearest2d(scale_factor=2),
+            nn.Conv2d(dim, dim, 4, 1, 1),
+            nn.LeakyReLU(0.2),
+            nn.UpsamplingNearest2d(scale_factor=2),
+            nn.Conv2d(dim, input_dim, 3, 1),
         )
 
         # self.apply(weights_init)
 
     def encode(self, x):
         z_e_x = self.encoder(x)
-        return self.codebook(z_e_x)
+        z_e_x1, z_e_x2 = z_e_x.chunk(2, dim=1)
+        q1, e1, l1, nll1 = self.codebook1(z_e_x1)
+        q2, e2, l2, nll2 = self.codebook2(z_e_x2)
+        q  = q1 + q2
+        e = torch.stack((e1,e2), dim=1)
+        return q, e, l1+l2, nll1+nll2
 
     def decode(self, z_q_x):
         return self.decoder(z_q_x)
@@ -52,12 +66,13 @@ class ResBlock(nn.Module):
         super().__init__()
         self.block = nn.Sequential( #nn.ReLU(True),
             nn.Conv2d(dim, idim, 3, 1, 1, bias=False), #nn.BatchNorm2d(idim),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.2),
             nn.Conv2d(idim, dim, 1, bias=False), #nn.BatchNorm2d(dim)
         )
+        self.activation = nn.LeakyReLU(0.2)
 
     def forward(self, x):
-        return F.relu(x + self.block(x))
+        return self.activation(x + self.block(x))
 
 class VectorQuantizerEMA(nn.Module):
     def __init__(self, K, dim, cc=0.25, decay=0.99, epsilon=1e-5):
@@ -103,7 +118,7 @@ class VectorQuantizerEMA(nn.Module):
         if self.training:
             one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
             one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
-            pdb.set_trace()
+
             self._ema_cluster_size = self._ema_cluster_size * self._decay + \
                                      (1 - self._decay) * one_hot.sum(dim=0)
 
@@ -128,7 +143,8 @@ class VectorQuantizerEMA(nn.Module):
         quantized = inputs + (quantized - inputs).detach()
         # avg_probs = torch.mean(encodings, dim=0)
         # nll = -torch.log(avg_probs + 1e-10).sum()
-        nll = torch.ones(1)
+        nll = torch.ones(1) # TODO
 
         # convert quantized from BHWC -> BCHW
-        return quantized.permute(0, 3, 1, 2).contiguous(), encodings, loss,  nll
+        quantized = quantized.permute(0, 3, 1, 2).contiguous()
+        return quantized, encodings, loss,  nll

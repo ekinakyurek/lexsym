@@ -12,12 +12,16 @@ from tqdm import tqdm
 from src.lex import FilterModel
 from src.vqvae import VectorQuantizedVAE
 from src.vae import VAE
+from src.dae import DAE
+
 from data.shapes import ShapeDataset
 from data.set import SetDataset
 
+import torchvision
 from torchvision.utils import make_grid, save_image
 import itertools
-import pdb
+
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("DEVICE: ", device)
 
@@ -133,7 +137,7 @@ def train_vae(datatype="Shapes", modeltype="VQVAE"):
     dim = 16
     num_residual_hiddens = 16
     embedding_dim=16
-    K = 16
+    K = 12
     commitment_cost = 0.25
     decay = 0.99
     learning_rate = 1e-3
@@ -157,8 +161,12 @@ def train_vae(datatype="Shapes", modeltype="VQVAE"):
                                    cc=commitment_cost,
                                    decay=decay,
                                    epsilon=epsilon).to(device)
-    else:
+    elif modeltype == "VAE":
         model = VAE(3, dim, embedding_dim).to(device)
+    elif modeltype ==  "DAE":
+        model = DAE(3, latentdim=embedding_dim*4*4).to(device)
+    else:
+        error("Unknown Model Type")
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=False)
 
@@ -190,16 +198,17 @@ def train_vae(datatype="Shapes", modeltype="VQVAE"):
                 validation_res_recon_error.append(val_recon)
                 # validation_res_perplexity.append(val_perp)
                 test_iter = itertools.cycle(iter(test_loader))
-                for j in range(5):
-                    _, img = next(test_iter)
-                    loss, recon, recon_error, *_= model(img.to(device))
-                    recon = recon.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
-                    recon = torch.clip(recon,0,1)
-                    img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
-                    img   = torch.clip(img,0,1)
-                    if (i+1) % 500 == 0:
-                        save_image(make_grid(recon),f"vis/vqvae_{i}_{j}.png")
-                        save_image(make_grid(img),f"vis/img_{i}_{j}.png")
+                if (i+1) % 500 == 0:
+                    T = torchvision.transforms.ToPILImage(mode=train.color)
+                    for j in range(5):
+                        _, img = next(test_iter)
+                        loss, recon, recon_error, *_= model(img.to(device))
+                        recon = recon.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
+                        img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
+                        T(make_grid(torch.clip(recon,0,1))).convert("RGB").save(f"vis/{datatype}_{modeltype}_{i}_{j}.png")
+                        T(make_grid(torch.clip(img,0,1))).convert("RGB").save(f"vis/{datatype}_{i}_{j}.png")
+
+
 
 def evaluate_vqvae(model,loader):
     val_res_recon_error = []
@@ -220,9 +229,10 @@ def evaluate_vqvae(model,loader):
 
 
 if __name__ == "__main__":
-    train_vae(datatype="Set++",modeltype="VQVAE")
-    # train_lexgen(datatype="Shapes")
-    # train_vae(datatype="Shapes",modeltype="VQVAE")
+    #train_vae(datatype="Set++",modeltype="DAE")
+    #train_vae(datatype="Set++",modeltype="VQVAE")
+    train_lexgen(datatype="Shapes")
+    #train_vae(datatype="Shapes",modeltype="VQVAE")
     #train_lexgen(datatype="Set++")
     #train_vae(datatype="Set++",modeltype="VAE")
     #train_vae(datatype="Shapes",modeltype="VAE")

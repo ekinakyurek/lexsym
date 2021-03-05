@@ -16,7 +16,7 @@ const str =
 const lstr =
   (ttype) =>  ttype.fill + " " + ttype.color + " " + ttype.shape;
 
-const hidden = "s_S_c_r_f_S"
+const hidden = "c_g_f_H"
 const data   = []
 const splits = {"train":[], "test":[]}
 all = types.map(x =>[x]).concat(cartesian(types,types)).concat(cartesian(types,types,types))
