@@ -118,7 +118,8 @@ def sample_scene():
 
 def main():
     data = []
-    for i in tqdm(range(1000)):
+    splits = {"train":[],"test":[]}
+    for i in tqdm(range(2000)):
         obj_desc, img = sample_scene()
         img_path = f"images/{i}.png"
         imageio.imsave(img_path, img)
@@ -126,8 +127,15 @@ def main():
             "image": img_path,
             "description": obj_desc
         })
+        if "red cube" in obj_desc:
+            splits["test"].append(i)
+        else:
+            splits["train"].append(i)
+            
     with open("data.json", "w") as writer:
         json.dump(data, writer)
+    with open("splits.json", "w") as writer:
+        json.dump(splits, writer)
 
 if __name__ == "__main__":
     main()
