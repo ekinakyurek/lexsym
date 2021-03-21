@@ -21,30 +21,38 @@ from data.scan import SCANDataset
 import torchvision
 from torchvision.utils import make_grid, save_image
 import itertools
+from absl import app, flags
+
+FLAGS = flags.FLAGS
+
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("DEVICE: ", device)
 
-def train_lexgen(datatype="Shapes"):
-    if datatype == "Set++":
+def train_lexgen(FLAGS.datatype="shapes"):
+    if FLAGS.datatype == "setpp":
         train  = SetDataset("data/setpp/", split="train")
         test   = SetDataset("data/setpp/", split="test", transform = train.transform, vocab = train.vocab)
     else:
         train  = ShapeDataset(root="data/shapes/", split="train")
         test   = ShapeDataset(root="data/shapes/", split="test", transform = train.transform, vocab = train.vocab)
 
-    loader = DataLoader(train, batch_size=64, collate_fn=train.collate)
-    test_loader = DataLoader(test, batch_size=32, collate_fn=train.collate)
+    vis_folder = os.path.join("vis",FLAGS.datatype,"FilterModel")
+    os.makedirs(vis_folder,exist_ok = True)
+    print("vis folder:", vis_folder)
+
+    loader = DataLoader(train, FLAGS.n_batch=64, collate_fn=train.collate)
+    test_loader = DataLoader(test, FLAGS.n_batch=32, collate_fn=train.collate)
 
     model = FilterModel(
         vocab=train.vocab,
         n_downsample=2,
-        n_latent=32,
+        FLAGS.n_latent=32,
         n_steps=10
     ).cuda()
 
-    optimizer = optim.Adam(model.parameters(), lr=0.0003)
+    optimizer = optim.Adam(model.parameters(), FLAGS.lr=0.0003)
 
     for i in range(50):
         print(i)
@@ -99,7 +107,7 @@ def visualize(dataset, name, command, results, attentions, text_attentions):
             img = img[:, :, 0]
         return img
 
-    imageio.imwrite("vis/" + name + f".result-0.png", prep(results[0]))
+    imageio.imwrite(os.path.join(vis_folder, name + f".result-0.png"), prep(results[0]))
     example = {
         "name": name,
         "command": command,
@@ -132,48 +140,62 @@ def render_html(visualizations):
 
 
 
-def train_vae(datatype="Shapes", modeltype="VQVAE"):
-    batch_size = 128
-    num_training_updates = 15000
-    dim = 16
-    num_residual_hiddens = 16
-    embedding_dim=16
-    K = 12
-    commitment_cost = 0.25
-    decay = 0.99
-    learning_rate = 1e-3
-    epsilon=1e-5
-    print(datatype)
+flags.DEFINE_integer("h_dim", 32, "")
+flags.DEFINE_integer("n_latent", 24, "")
+flags.DEFINE_integer("n_batch", 128, "")
+flags.DEFINE_integer("n_iter", 15000, "")
+flags.DEFINE_integer("n_codes", 10, "")
+flags.DEFINE_float("beta", 5.0, "")
+flags.DEFINE_float("commitment_cost", 0.25, "")
+flags.DEFINE_string("FLAGS.datatype","setpp","")
+flags.DEFINE_string("FLAGS.modeltype","VQVAE","")
+flags.DEFINE_float("decay",0.99,"")
+flags.DEFINE_float("lr",1e-3,"")
+flags.DEFINE_float("epsilon",1e-5,"")
 
-    if datatype == "Set++":
+def flags_to_path():
+    return os.path.join("vis",
+                FLAGS.datatype,
+                FLAGS.modeltype,
+                f"beta_{FLAGS.beta}_ldim_{FLAGS.n_latent}_dim_{FLAGS.h_dim}_lr_{FLAGS.lr}")
+
+def train_vae():
+
+    if FLAGS.datatype == "setpp":
         train  = SetDataset("data/setpp/", split="train")
         test   = SetDataset("data/setpp/", split="test", transform=train.transform, vocab=train.vocab)
-    elif datatype == "Shapes":
+    elif FLAGS.datatype == "shapes":
         train  = ShapeDataset("data/shapes/",split="train")
         test   = ShapeDataset("data/shapes/",split="test", transform=train.transform, vocab=train.vocab)
     else:
         train  = SCANDataset("data/scan/",split="train")
         test   = SCANDataset("data/scan/",split="test", transform=train.transform, vocab=train.vocab)
 
+    vis_folder = flags_to_path()
+    os.makedirs(vis_folder,exist_ok = True)
+    print("vis folder:", vis_folder)
 
+    loader = DataLoader(train, FLAGS.n_batch=FLAGS.n_batch, shuffle=True, collate_fn=train.collate, pin_memory=True)
+    test_loader = DataLoader(test, FLAGS.n_batch=32, shuffle=True,collate_fn=train.collate, pin_memory=True)
 
-    loader = DataLoader(train, batch_size=batch_size, shuffle=True, collate_fn=train.collate, pin_memory=True)
-    test_loader = DataLoader(test, batch_size=32, shuffle=True,collate_fn=train.collate, pin_memory=True)
-
-    if modeltype == "VQVAE":
-        model = VectorQuantizedVAE(3, dim, embedding_dim,
-                                   K=K,
-                                   cc=commitment_cost,
-                                   decay=decay,
-                                   epsilon=epsilon).to(device)
-    elif modeltype == "VAE":
-        model = VAE(3, dim, embedding_dim).to(device)
-    elif modeltype ==  "DAE":
-        model = DAE(3, latentdim=embedding_dim*4*4).to(device)
+    if FLAGS.modeltype == "VQVAE":
+        model = VectorQuantizedVAE(3, FLAGS.h_dim,
+                                     FLAGS.n_latent,
+                                     n_codes=FLAGS.n_codes,
+                                     cc=FLAGS.commitment_cost,
+                                     decay=FLAGS.decay,
+                                     epsilon=FLAGS.epsilon,
+                                     beta=FLAGS.beta,
+                                     cmdproc=False,
+                                   ).to(device)
+    elif FLAGS.modeltype == "VAE":
+        model = VAE(3, FLAGS.h_dim, FLAGS.n_latent, beta=FLAGS.beta).to(device)
+    elif FLAGS.modeltype ==  "DAE":
+        model = DAE(3, latentdim=FLAGS.n_latent*4*4).to(device)
     else:
         error("Unknown Model Type")
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=False)
+    optimizer = optim.Adam(model.parameters(), FLAGS.lr=FLAGS.lr)
 
     train_res_recon_error = []
     # train_res_perplexity = []
@@ -182,11 +204,12 @@ def train_vae(datatype="Shapes", modeltype="VQVAE"):
 
     model.train()
     iterator = itertools.cycle(iter(loader))
-    for i in range(num_training_updates):
-        (_, img) = next(iterator)
+    for i in range(FLAGS.n_iter):
+        (cmd, img) = next(iterator)
         img = img.to(device)
+        cmd = cmd.to(device)
         optimizer.zero_grad()
-        loss, _, recon_error, *_ = model(img)
+        loss, _, recon_error, *_ = model(img, cmd)
         loss.backward()
         optimizer.step()
 
@@ -206,22 +229,27 @@ def train_vae(datatype="Shapes", modeltype="VQVAE"):
                 if (i+1) % 500 == 0:
                     T = torchvision.transforms.ToPILImage(mode=train.color)
                     for j in range(5):
-                        _, img = next(test_iter)
-                        loss, recon, recon_error, *_= model(img.to(device))
+                        cmd, img = next(test_iter)
+                        loss, recon, recon_error, *_= model(img.to(device), cmd.to(device))
                         recon = recon.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
                         img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
-                        T(make_grid(torch.clip(recon,0,1))).convert("RGB").save(f"vis/{datatype}_{modeltype}_{i}_{j}.png")
-                        T(make_grid(torch.clip(img,0,1))).convert("RGB").save(f"vis/{datatype}_{i}_{j}.png")
+                        res   =  torch.cat((recon,img),0).clip_(0,1)
+                        T(make_grid(res)).convert("RGB").save(os.path.join(vis_folder,f"{i}_{j}.png"))
+                        if FLAGS.modeltype=="VAE":
+                            sample, _ = model.sample(B=32)
+                            sample = sample.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
+                            T(make_grid(sample.clip_(0,1))).convert("RGB").save(os.path.join(vis_folder,f"prior_{i}_{j}.png"))
 
-
+    torch.save(model,os.path.join(vis_folder,f"model.pt"))
 
 def evaluate_vqvae(model,loader):
     val_res_recon_error = []
     # val_res_perplexity = []
     model.eval()
-    for (_, img) in loader:
+    for (cmd, img) in loader:
         img = img.to(device)
-        loss, data_recon, recon_error, *_= model(img)
+        cmd = cmd.to(device)
+        loss, data_recon, recon_error, *_= model(img, cmd)
         val_res_recon_error.append(recon_error.item())
         # val_res_perplexity.append(perplexity.item())
 
@@ -234,11 +262,12 @@ def evaluate_vqvae(model,loader):
 
 
 if __name__ == "__main__":
-    #train_vae(datatype="Set++",modeltype="DAE")
-    train_vae(datatype="Set++",modeltype="VQVAE")
-    #train_vae(datatype="SCAN",modeltype="VQVAE")
-    #train_lexgen(datatype="Shapes")
-    #train_vae(datatype="Shapes",modeltype="VQVAE")
-    #train_lexgen(datatype="Set++")
-    #train_vae(datatype="Set++",modeltype="VAE")
-    #train_vae(datatype="Shapes",modeltype="VAE")
+    train_vae()
+    #train_vae(FLAGS.datatype="setpp",FLAGS.modeltype="DAE")
+    #train_vae(FLAGS.datatype="setpp",FLAGS.modeltype="VQVAE")
+    #train_vae(FLAGS.datatype="SCAN",FLAGS.modeltype="VQVAE")
+    #train_lexgen(FLAGS.datatype="shapes")
+    #train_vae(FLAGS.datatype="shapes",FLAGS.modeltype="VQVAE")
+    #train_lexgen(FLAGS.datatype="setpp")
+
+    #train_vae(FLAGS.datatype="shapes",FLAGS.modeltype="VAE")

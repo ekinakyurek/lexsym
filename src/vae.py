@@ -4,15 +4,18 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.distributions import kl_divergence
 from .utils import weights_init
+import pdb
 
 class VAE(nn.Module):
     def __init__(self, input_dim, dim, z_dim, beta=1.0, noise=None):
         super().__init__()
         self.beta = beta
+        self.zdim = z_dim
+
         if noise is not None:
-            sel.noise = noise
+            self.noise = noise
         else:
-            sel.noise = nn.Identity()
+            self.noise = nn.Identity()
 
         self.encoder = nn.Sequential(
             nn.Conv2d(input_dim, dim, 4, 2, 1),
@@ -38,14 +41,28 @@ class VAE(nn.Module):
             nn.ConvTranspose2d(dim, input_dim, 4, 2, 1)
         )
 
-        # self.apply(weights_init)
+        self.apply(weights_init)
 
-    def forward(self, x):
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
+
+    def kl_div(self, mu, logvar):
+        return (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).sum().div(mu.shape[0])
+
+    def forward(self, x, cmd=None):
         mu, logvar = self.encoder(x).chunk(2, dim=1)
-        q_z_x = Normal(mu, logvar.mul(.5).exp())
-        p_z = Normal(torch.zeros_like(mu), torch.ones_like(logvar))
-        kl_div = kl_divergence(q_z_x, p_z).sum(1).mean()
-        x_tilde = self.decoder(q_z_x.rsample())
-        loss_recons = F.mse_loss(sel.noise(x_tilde), sel.noise(x), size_average=False).div(x.size(0))
+        kl_div = self.kl_div(mu, logvar)
+        sample  = self.reparameterize(mu, logvar)
+        x_tilde = self.decoder(sample)
+        loss_recons = (self.noise(x_tilde) - self.noise(x)).pow(2).sum().div(mu.shape[0])
         loss = loss_recons + self.beta * kl_div
         return loss, x_tilde, loss_recons, kl_div
+
+    def sample(self, B=1, cmd=None):
+        mu = torch.zeros(B,self.zdim,2,2).to(self.encoder[0].weight.device)
+        p_z = Normal(mu, torch.ones_like(mu))
+        z = p_z.sample()
+        x_tilde = self.decoder(z)
+        return x_tilde, z

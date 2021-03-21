@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .utils import weights_init
+import pdb
 
 class VectorQuantizedVAE(nn.Module):
-    def __init__(self, input_dim, dim, edim, K=16, cc=0.25, decay=0.99, epsilon=1e-5):
+    def __init__(self, input_dim, dim, edim, n_codes=16, cc=0.25, decay=0.99, epsilon=1e-5, beta=1.0, cmdproc=False):
         super().__init__()
 
         self.encoder = nn.Sequential(
@@ -18,12 +19,16 @@ class VectorQuantizedVAE(nn.Module):
             nn.LeakyReLU(0.2),
             ResBlock(2*dim, dim // 2),
             ResBlock(2*dim, dim // 2),
-            nn.Conv2d(2*dim, 2*edim, 1, 1),
+            nn.Conv2d(2*dim, edim, 1, 1),
         )
 
-        self.codebook1 = VectorQuantizerEMA(K, edim,  cc=cc, decay=decay, epsilon=epsilon)
-
-        self.codebook2 = VectorQuantizerEMA(K, edim,  cc=cc, decay=decay, epsilon=epsilon)
+        self.codebook1 = VectorQuantizerEMA(n_codes, edim,  cc=cc, decay=decay, epsilon=epsilon, beta=beta, cmdproc=cmdproc)
+        #
+        # self.codebook2 = VectorQuantizerEMA(n_codes, edim,  cc=cc, decay=decay, epsilon=epsilon)
+        #
+        # self.codebook3 = VectorQuantizerEMA(n_codes, edim,  cc=cc, decay=decay, epsilon=epsilon)
+        #
+        # self.codebook4 = VectorQuantizerEMA(n_codes, edim,  cc=cc, decay=decay, epsilon=epsilon)
 
         self.decoder = nn.Sequential(
             nn.Conv2d(edim, 2*dim, 3, 1, 1),
@@ -40,23 +45,27 @@ class VectorQuantizedVAE(nn.Module):
             nn.Conv2d(dim, input_dim, 3, 1),
         )
 
-        # self.apply(weights_init)
+        self.apply(weights_init)
 
-    def encode(self, x):
+    def encode(self, x, cmds=None):
         z_e_x = self.encoder(x)
-        z_e_x1, z_e_x2 = z_e_x.chunk(2, dim=1)
-        q1, e1, l1, nll1 = self.codebook1(z_e_x1)
-        q2, e2, l2, nll2 = self.codebook2(z_e_x2)
-        q  = q1 + q2
-        e = torch.stack((e1,e2), dim=1)
-        return q, e, l1+l2, nll1+nll2
+        return self.codebook1(z_e_x, cmds)
+        # z_e_x1, z_e_x2, z_e_x3, z_e_x4 = z_e_x.chunk(4, dim=1)
+        # cmds = cmds.view(3,3,-1) # 3 x 3 x B
+        # q1, e1, l1, nll1 = self.codebook1(z_e_x1, cmds[:,0,:])
+        # q2, e2, l2, nll2 = self.codebook2(z_e_x2, cmds[:,1,:])
+        # q3, e3, l3, nll3 = self.codebook3(z_e_x3, cmds[:,2,:])
+        # q4, e4, l4, nll4 = self.codebook4.forward2(z_e_x4)
+        # q  = (q1 + q2 + q3 + q4) / 3
+        # e = torch.stack((e1,e2,e3,e4), dim=1)
+        # return q, e, (l1+l2+l3+l4) / 4, (nll1+nll2+nll3+nll4) / 4
 
-    def decode(self, z_q_x):
+    def decode(self, z_q_x, cmds=None):
         return self.decoder(z_q_x)
 
-    def forward(self, x):
-        z_q_x, latents, loss, nll = self.encode(x)
-        x_tilde = self.decode(z_q_x)
+    def forward(self, x, cmds=None):
+        z_q_x, latents, loss, nll = self.encode(x, cmds)
+        x_tilde = self.decode(z_q_x, cmds)
         recon_error = F.mse_loss(x_tilde, x)
         loss += recon_error
         return loss, x_tilde, recon_error, nll, z_q_x, latents
@@ -75,23 +84,83 @@ class ResBlock(nn.Module):
         return self.activation(x + self.block(x))
 
 class VectorQuantizerEMA(nn.Module):
-    def __init__(self, K, dim, cc=0.25, decay=0.99, epsilon=1e-5):
+    def __init__(self, n_codes, dim, cc=0.25, decay=0.99, epsilon=1e-5, beta=1.0, cmdproc=False):
         super(VectorQuantizerEMA, self).__init__()
 
+        self.cmdproc = cmdproc
+        self.beta = beta
+
         self._embedding_dim = dim
-        self._num_embeddings = K
+        self._num_embeddings = n_codes
 
         self._embedding = nn.Embedding(self._num_embeddings, self._embedding_dim)
         self._embedding.weight.data.uniform_(-1/self._num_embeddings, 1/self._num_embeddings)
         self._commitment_cost = cc
 
-        self.register_buffer('_ema_cluster_size', torch.zeros(K))
+        self.register_buffer('_ema_cluster_size', torch.zeros(n_codes))
         self._ema_w = nn.Parameter(self._embedding.weight.clone())
         self._decay = decay
 
         self._epsilon = epsilon
 
-    def forward(self, inputs):
+    def forward2(self, inputs):
+        # convert inputs from BCHW -> BHWC
+        inputs = inputs.permute(0, 2, 3, 1).contiguous()
+        input_shape = inputs.shape
+
+        # Flatten input
+        flatten = inputs.view(-1, self._embedding_dim)
+
+        # Calculate distances
+        distances = (
+            flatten.pow(2).sum(1, keepdim=True)
+            - 2 * flatten @ self._embedding.weight.t()
+            + self._embedding.weight.pow(2).sum(1, keepdim=True).t()
+        )
+
+        # Encoding
+        encoding_indices = torch.argmin(distances, dim=1)
+        encodings = encoding_indices.view(input_shape[0:3])
+        one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
+        one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
+        # Quantize and unflatten
+        # quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
+
+        quantized = self._embedding(encodings)
+
+        # Use EMA to update the embedding vectors
+        if self.training:
+            self._ema_cluster_size = self._ema_cluster_size * self._decay + \
+                                     (1 - self._decay) * one_hot.sum(dim=0)
+
+            # Laplace smoothing of the cluster size
+            n = torch.sum(self._ema_cluster_size.data)
+            self._ema_cluster_size = (
+                (self._ema_cluster_size + self._epsilon)
+                / (n + self._num_embeddings * self._epsilon) * n)
+
+            dw = one_hot.t() @ flatten
+            self._ema_w.data = self._ema_w * self._decay + (1 - self._decay) * dw
+
+            self._embedding.weight.data = self._ema_w / self._ema_cluster_size.unsqueeze(1)
+
+        # Loss
+        e_latent_loss = F.mse_loss(quantized.detach(), inputs)
+        q_latent_loss = F.mse_loss(quantized, inputs.detach())
+        loss = q_latent_loss + self._commitment_cost * e_latent_loss
+
+
+        # Straight Through Estimator
+        quantized = inputs + (quantized - inputs).detach()
+        avg_probs = torch.mean(one_hot, dim=0)
+        nll = -torch.log(avg_probs + 1e-10).sum()
+        #nll = torch.ones(1) # TODO
+
+        # convert quantized from BHWC -> BCHW
+        quantized = quantized.permute(0, 3, 1, 2).contiguous()
+        return quantized, encodings, loss,  nll
+
+    def forward(self, inputs, cmds=None):
         # convert inputs from BCHW -> BHWC
         inputs = inputs.permute(0, 2, 3, 1).contiguous()
         input_shape = inputs.shape
@@ -111,6 +180,19 @@ class VectorQuantizerEMA(nn.Module):
         encodings = encoding_indices.view(input_shape[0:3])
         # Quantize and unflatten
         # quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
+
+        if cmds is not None and self.cmdproc:
+            ###
+            dists = distances.view(input_shape[0],input_shape[1] * input_shape[2], self._num_embeddings) # [B, HW, n_codes]
+            num_objs =  torch.count_nonzero(cmds,dim=0) # B
+            cmd_loss = 0.
+            for (k,inst) in enumerate(dists.split(1, dim=0)): #
+                regions = inst.squeeze(0).chunk(num_objs[k],dim=0)
+                for (j,region) in enumerate(regions):
+                    cmd_loss += region[:,cmds[j,k]].mean()
+            cmd_loss = 0.01 * (cmd_loss / input_shape[0])
+        else:
+            cmd_loss = 0
 
         quantized = self._embedding(encodings)
 
@@ -136,7 +218,8 @@ class VectorQuantizerEMA(nn.Module):
         # Loss
         e_latent_loss = F.mse_loss(quantized.detach(), inputs)
         q_latent_loss = F.mse_loss(quantized, inputs.detach())
-        loss = q_latent_loss + self._commitment_cost * e_latent_loss
+        loss = q_latent_loss + self._commitment_cost * e_latent_loss  + cmd_loss
+        loss *= self.beta
 
 
         # Straight Through Estimator
