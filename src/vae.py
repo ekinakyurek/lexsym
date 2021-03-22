@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.distributions import kl_divergence
 from .utils import weights_init
+import numpy as np
 import pdb
 
 class VAE(nn.Module):
@@ -50,6 +51,28 @@ class VAE(nn.Module):
 
     def kl_div(self, mu, logvar):
         return (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).sum().div(mu.shape[0])
+
+    def prior_prob(self, dist, z):
+        B,C,H,W = dist.mean.shape
+        z = z.view(-1,B,C,H,W)
+        N = z.shape[0]
+        return dist.log_prob(z).sum((2,3,4)).view(N,B)
+
+    def out_prob(self, x, x_tilde):
+        fz  = -(x_tilde -x).pow(2).sum((2,3,4)).div(2)
+        dim = math.prod(x.shape[1:])
+        C  = 0.5 * dim * np.log(2*math.pi)
+        return fz - C
+
+    def logprob(self, x, cmd=None, N=25):
+        mu, logvar = self.encoder(x).chunk(2, dim=1)
+        q_z = Normal(mu, logvar)
+        p_z = Normal(torch.zeros_like(mu), torch.ones_like(mu))
+        z = q_z.sample((N,)).view(-1,*mu.shape[1:])
+        x_tilde = self.decoder(z).view(N,*x.shape)
+        logpx = self.out_prob(x,x_tilde) + self.prior_prob(p_z,z) - self.prior_prob(q_z, z)
+        return (logpx.logsumexp(dim=0) - np.log(N)).sum(0)
+
 
     def forward(self, x, cmd=None):
         mu, logvar = self.encoder(x).chunk(2, dim=1)

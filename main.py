@@ -2,6 +2,7 @@ import os
 import torch
 import imageio
 import json
+import random
 import numpy as np
 from torch import optim
 from torch.utils import data as torch_data
@@ -25,12 +26,10 @@ from absl import app, flags
 
 FLAGS = flags.FLAGS
 
-
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("DEVICE: ", device)
 
-def train_lexgen(FLAGS.datatype="shapes"):
+def train_lexgen():
     if FLAGS.datatype == "setpp":
         train  = SetDataset("data/setpp/", split="train")
         test   = SetDataset("data/setpp/", split="test", transform = train.transform, vocab = train.vocab)
@@ -42,17 +41,17 @@ def train_lexgen(FLAGS.datatype="shapes"):
     os.makedirs(vis_folder,exist_ok = True)
     print("vis folder:", vis_folder)
 
-    loader = DataLoader(train, FLAGS.n_batch=64, collate_fn=train.collate)
-    test_loader = DataLoader(test, FLAGS.n_batch=32, collate_fn=train.collate)
+    loader = DataLoader(train, batch_size=FLAGS.n_batch, collate_fn=train.collate)
+    test_loader = DataLoader(test, batch_size=32, collate_fn=train.collate)
 
     model = FilterModel(
         vocab=train.vocab,
         n_downsample=2,
-        FLAGS.n_latent=32,
+        n_latent=FLAGS.n_latent,
         n_steps=10
     ).cuda()
 
-    optimizer = optim.Adam(model.parameters(), FLAGS.lr=0.0003)
+    optimizer = optim.Adam(model.parameters(), lr=FLAGS.lr)
 
     for i in range(50):
         print(i)
@@ -145,22 +144,35 @@ flags.DEFINE_integer("n_latent", 24, "")
 flags.DEFINE_integer("n_batch", 128, "")
 flags.DEFINE_integer("n_iter", 15000, "")
 flags.DEFINE_integer("n_codes", 10, "")
+flags.DEFINE_integer("seed", 0, "")
 flags.DEFINE_float("beta", 5.0, "")
 flags.DEFINE_float("commitment_cost", 0.25, "")
-flags.DEFINE_string("FLAGS.datatype","setpp","")
-flags.DEFINE_string("FLAGS.modeltype","VQVAE","")
+flags.DEFINE_string("datatype","setpp","")
+flags.DEFINE_string("modeltype","VQVAE","")
 flags.DEFINE_float("decay",0.99,"")
 flags.DEFINE_float("lr",1e-3,"")
 flags.DEFINE_float("epsilon",1e-5,"")
 
 def flags_to_path():
-    return os.path.join("vis",
-                FLAGS.datatype,
-                FLAGS.modeltype,
-                f"beta_{FLAGS.beta}_ldim_{FLAGS.n_latent}_dim_{FLAGS.h_dim}_lr_{FLAGS.lr}")
+    root = os.path.join("vis", FLAGS.datatype, FLAGS.modeltype)
+    if FLAGS.modeltype == "VQVAE":
+        return os.path.join(root,
+                    f"beta_{FLAGS.beta}_ncodes_{FLAGS.n_codes}_ldim_{FLAGS.n_latent}_dim_{FLAGS.h_dim}_lr_{FLAGS.lr}")
+    else:
+        return os.path.join(root,
+                    f"beta_{FLAGS.beta}_ldim_{FLAGS.n_latent}_dim_{FLAGS.h_dim}_lr_{FLAGS.lr}")
+
+
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 def train_vae():
-
+    set_seed(FLAGS.seed)
     if FLAGS.datatype == "setpp":
         train  = SetDataset("data/setpp/", split="train")
         test   = SetDataset("data/setpp/", split="test", transform=train.transform, vocab=train.vocab)
@@ -175,8 +187,9 @@ def train_vae():
     os.makedirs(vis_folder,exist_ok = True)
     print("vis folder:", vis_folder)
 
-    loader = DataLoader(train, FLAGS.n_batch=FLAGS.n_batch, shuffle=True, collate_fn=train.collate, pin_memory=True)
-    test_loader = DataLoader(test, FLAGS.n_batch=32, shuffle=True,collate_fn=train.collate, pin_memory=True)
+
+    loader = DataLoader(train, batch_size=FLAGS.n_batch, shuffle=True, collate_fn=train.collate, pin_memory=True)
+    test_loader = DataLoader(test, batch_size=32, shuffle=True,collate_fn=train.collate, pin_memory=True)
 
     if FLAGS.modeltype == "VQVAE":
         model = VectorQuantizedVAE(3, FLAGS.h_dim,
@@ -195,13 +208,9 @@ def train_vae():
     else:
         error("Unknown Model Type")
 
-    optimizer = optim.Adam(model.parameters(), FLAGS.lr=FLAGS.lr)
+    optimizer = optim.Adam(model.parameters(), lr=FLAGS.lr)
 
     train_res_recon_error = []
-    # train_res_perplexity = []
-    validation_res_recon_error = []
-    # validation_res_perplexity = []
-
     model.train()
     iterator = itertools.cycle(iter(loader))
     for i in range(FLAGS.n_iter):
@@ -220,11 +229,11 @@ def train_vae():
             with torch.no_grad():
                 print('%d iterations' % (i+1))
                 print('recon_error: %.6f' % np.mean(train_res_recon_error[-100:]))
-                # print('perplexity: %.6f' % np.mean(train_res_perplexity[-100:]))
+                #print('perplexity: %.6f' % np.mean(train_res_perplexity[-100:]))
                 print(len(test_loader))
-                val_recon = evaluate_vqvae(model, test_loader)
-                validation_res_recon_error.append(val_recon)
-                # validation_res_perplexity.append(val_perp)
+                val_recon, val_perp = evaluate_vqvae(model, test_loader)
+                print('val_recon_error: %.6f' % val_recon)
+                print('val_perplexity: %.6f' % val_perp)
                 test_iter = itertools.cycle(iter(test_loader))
                 if (i+1) % 500 == 0:
                     T = torchvision.transforms.ToPILImage(mode=train.color)
@@ -243,26 +252,31 @@ def train_vae():
     torch.save(model,os.path.join(vis_folder,f"model.pt"))
 
 def evaluate_vqvae(model,loader):
-    val_res_recon_error = []
-    # val_res_perplexity = []
+    val_res_recon_error = 0.0
+    val_res_perplexity = 0.0
     model.eval()
+    cnt = 0
     for (cmd, img) in loader:
         img = img.to(device)
         cmd = cmd.to(device)
-        loss, data_recon, recon_error, *_= model(img, cmd)
-        val_res_recon_error.append(recon_error.item())
-        # val_res_perplexity.append(perplexity.item())
+        cnt += img.shape[0]
+        if FLAGS.modeltype == "VQVAE":
+            loss, data_recon, recon_error, nll, *_ = model(img, cmd)
+        else:
+            loss, data_recon, recon_error, *_  = model(img, cmd)
+            nll = model.logprob(img,cmd)
 
-
-    print('val recon_error: %.6f' % np.mean(val_res_recon_error))
-    # print('val perplexity: %.6f' % np.mean(val_res_perplexity))
-    print()
+        val_res_recon_error += recon_error.item()
+        val_res_perplexity += nll.item()
     model.train()
-    return np.mean(val_res_recon_error)
+    return val_res_recon_error / cnt, val_res_perplexity / cnt
 
+
+def main(argv):
+    train_vae()
 
 if __name__ == "__main__":
-    train_vae()
+    app.run(main)
     #train_vae(FLAGS.datatype="setpp",FLAGS.modeltype="DAE")
     #train_vae(FLAGS.datatype="setpp",FLAGS.modeltype="VQVAE")
     #train_vae(FLAGS.datatype="SCAN",FLAGS.modeltype="VQVAE")

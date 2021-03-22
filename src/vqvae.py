@@ -153,7 +153,7 @@ class VectorQuantizerEMA(nn.Module):
         # Straight Through Estimator
         quantized = inputs + (quantized - inputs).detach()
         avg_probs = torch.mean(one_hot, dim=0)
-        nll = -torch.log(avg_probs + 1e-10).sum()
+        nll = -torch.log(avg_probs + 1e-10).sum() * inputs.shape[0]
         #nll = torch.ones(1) # TODO
 
         # convert quantized from BHWC -> BCHW
@@ -178,6 +178,8 @@ class VectorQuantizerEMA(nn.Module):
         # Encoding
         encoding_indices = torch.argmin(distances, dim=1)
         encodings = encoding_indices.view(input_shape[0:3])
+        one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
+        one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
         # Quantize and unflatten
         # quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
 
@@ -198,9 +200,6 @@ class VectorQuantizerEMA(nn.Module):
 
         # Use EMA to update the embedding vectors
         if self.training:
-            one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
-            one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
-
             self._ema_cluster_size = self._ema_cluster_size * self._decay + \
                                      (1 - self._decay) * one_hot.sum(dim=0)
 
@@ -224,9 +223,9 @@ class VectorQuantizerEMA(nn.Module):
 
         # Straight Through Estimator
         quantized = inputs + (quantized - inputs).detach()
-        # avg_probs = torch.mean(encodings, dim=0)
-        # nll = -torch.log(avg_probs + 1e-10).sum()
-        nll = torch.ones(1) # TODO
+        avg_probs = torch.mean(one_hot, dim=0)
+        nll = -torch.log(avg_probs + 1e-10).sum()
+        #nll = torch.ones(1) # TODO
 
         # convert quantized from BHWC -> BCHW
         quantized = quantized.permute(0, 3, 1, 2).contiguous()
