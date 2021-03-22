@@ -79,7 +79,7 @@ class VectorQuantizedVAE(nn.Module):
         z_q_x, latents, loss, nll = self.encode(x, cmds)
         x_tilde = self.decode(z_q_x, cmds)
         pxz = Normal(x_tilde, torch.ones_like(x_tilde))
-        return (-self._log_prob(pxz,x) + nll).sum()
+        return -self._log_prob(pxz,x).sum() + nll # this is single sample estimate, so it's lower bound
 
 
 class ResBlock(nn.Module):
