@@ -67,9 +67,9 @@ class VectorQuantizedVAE(nn.Module):
         # return q, e, (l1+l2+l3+l4) / 4, (nll1+nll2+nll3+nll4) / 4
 
     def sample(self, B=1, cmd=None):
-        z_q_x = self.codebook1.sample(B=B,cmd=cmd)
-        x_tilde = self.decode(z_q_x, cmds)
-        return x_tilde
+        z_q_x, encodings = self.codebook1.sample(B=B,cmd=cmd)
+        x_tilde = self.decode(z_q_x)
+        return x_tilde, encodings
 
     def decode(self, z_q_x, cmds=None):
         return self.decoder(z_q_x)
@@ -196,8 +196,8 @@ class VectorQuantizerEMA(nn.Module):
 
 
     def sample(self, B=1, cmd=None):
-        encodings = np.random.choice(np.arange(self._num_embeddings), (B, 4, 4))
-        encodings = torch.from_numpy(encodings).to(self._embeding.weight.device)
+        encodings = np.random.choice(np.arange(self._num_embeddings), (B, 8, 8))
+        encodings = torch.from_numpy(encodings).to(self._embedding.weight.device)
         quantized = self._embedding(encodings)
         quantized = quantized.permute(0, 3, 1, 2).contiguous()
-        return quantized
+        return quantized, encodings

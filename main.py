@@ -142,7 +142,7 @@ def render_html(visualizations):
 flags.DEFINE_integer("h_dim", 32, "")
 flags.DEFINE_integer("n_latent", 24, "")
 flags.DEFINE_integer("n_batch", 128, "")
-flags.DEFINE_integer("n_iter", 15000, "")
+flags.DEFINE_integer("n_iter", 25000, "")
 flags.DEFINE_integer("n_codes", 10, "")
 flags.DEFINE_integer("seed", 0, "")
 flags.DEFINE_float("beta", 5.0, "")
