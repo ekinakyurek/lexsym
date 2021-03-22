@@ -7,7 +7,7 @@
 #SBATCH --qos=high
 #SBATCH --constrain=xeon-g6
 #SBATCH --gres=gpu:volta:1
-#SBATCH --array=1-2
+#SBATCH --array=1-18
 n_batch=128
 h_dim=32
 seed=0
@@ -15,8 +15,8 @@ modeltype=VAE
 datatype=setpp
 i=0
 for n_latent in 16 32 64; do
-  for beta in 1.0 5.0 10.0; do
-    for lr in 0.001 0.0003; do
+  for beta in 1.0 5.0 7.5; do
+      for lr in 0.001 0.0003; do
           i=$((i + 1));
           if [[ $i -eq $SLURM_ARRAY_TASK_ID ]]; then
             exp_folder="vis/${datatype}/${modeltype}/beta_${beta}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/logs/"
