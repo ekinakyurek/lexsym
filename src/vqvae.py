@@ -3,12 +3,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .utils import weights_init
 import math
+import numpy as np
 from torch.distributions.normal import Normal
 import pdb
 
 class VectorQuantizedVAE(nn.Module):
     def __init__(self, input_dim, dim, edim, n_codes=16, cc=0.25, decay=0.99, epsilon=1e-5, beta=1.0, cmdproc=False):
         super().__init__()
+
+        self.h_dim = dim
+        self.l_dim = edim
 
         self.encoder = nn.Sequential(
             nn.Conv2d(input_dim, dim , 4, 2, 1),
@@ -61,6 +65,11 @@ class VectorQuantizedVAE(nn.Module):
         # q  = (q1 + q2 + q3 + q4) / 3
         # e = torch.stack((e1,e2,e3,e4), dim=1)
         # return q, e, (l1+l2+l3+l4) / 4, (nll1+nll2+nll3+nll4) / 4
+
+    def sample(self, B=1, cmd=None):
+        z_q_x = self.codebook1.sample(B=B,cmd=cmd)
+        x_tilde = self.decode(z_q_x, cmds)
+        return x_tilde
 
     def decode(self, z_q_x, cmds=None):
         return self.decoder(z_q_x)
@@ -184,3 +193,11 @@ class VectorQuantizerEMA(nn.Module):
         # convert quantized from BHWC -> BCHW
         quantized = quantized.permute(0, 3, 1, 2).contiguous()
         return quantized, encodings, loss,  nll
+
+
+    def sample(self, B=1, cmd=None):
+        encodings = np.random.choice(np.arange(self._num_embeddings), (B, 4, 4))
+        encodings = torch.from_numpy(encodings).to(self._embeding.weight.device)
+        quantized = self._embedding(encodings)
+        quantized = quantized.permute(0, 3, 1, 2).contiguous()
+        return quantized

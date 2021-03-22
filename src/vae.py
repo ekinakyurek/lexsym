@@ -64,7 +64,6 @@ class VAE(nn.Module):
         x_tilde = self.decoder(z.view(-1,*mu.shape[1:])).view(N,*x.shape)
         pxz = Normal(x_tilde, torch.ones_like(x_tilde))
         logpx = self._log_prob(pxz,x) + self._log_prob(p_z,z) - self._log_prob(q_z, z)
-        pdb.set_trace()
         return -((logpx.logsumexp(dim=0) - np.log(N)).sum(0))
 
 
