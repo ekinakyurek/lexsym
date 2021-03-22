@@ -210,7 +210,8 @@ def train_vae():
 
     optimizer = optim.Adam(model.parameters(), lr=FLAGS.lr)
 
-    train_res_recon_error = []
+    train_res_recon_error = 0.
+    cnt = 0.
     model.train()
     iterator = itertools.cycle(iter(loader))
     for i in range(FLAGS.n_iter):
@@ -222,18 +223,19 @@ def train_vae():
         loss.backward()
         optimizer.step()
 
-        train_res_recon_error.append(recon_error.item())
-        # train_res_perplexity.append(perplexity.item())
+        train_res_recon_error += recon_error.item()
+        cnt += img.shape[0]
+        # train_res_nll.append(nll.item())
 
         if (i+1) % 100 == 0:
             with torch.no_grad():
                 print('%d iterations' % (i+1))
-                print('recon_error: %.6f' % np.mean(train_res_recon_error[-100:]))
-                #print('perplexity: %.6f' % np.mean(train_res_perplexity[-100:]))
+                print('recon_error: %.6f' % (train_res_recon_error / cnt))
+                #print('nll: %.6f' % np.mean(train_res_nll[-100:]))
                 print(len(test_loader))
                 val_recon, val_perp = evaluate_vqvae(model, test_loader)
                 print('val_recon_error: %.6f' % val_recon)
-                print('val_perplexity: %.6f' % val_perp)
+                print('val_nll: %.6f' % val_perp)
                 test_iter = itertools.cycle(iter(test_loader))
                 if (i+1) % 500 == 0:
                     T = torchvision.transforms.ToPILImage(mode=train.color)
@@ -253,23 +255,19 @@ def train_vae():
 
 def evaluate_vqvae(model,loader):
     val_res_recon_error = 0.0
-    val_res_perplexity = 0.0
+    val_res_nll = 0.0
     model.eval()
     cnt = 0
     for (cmd, img) in loader:
         img = img.to(device)
         cmd = cmd.to(device)
         cnt += img.shape[0]
-        if FLAGS.modeltype == "VQVAE":
-            loss, data_recon, recon_error, nll, *_ = model(img, cmd)
-        else:
-            loss, data_recon, recon_error, *_  = model(img, cmd)
-            nll = model.logprob(img,cmd)
-
+        loss, data_recon, recon_error, *_ = model(img, cmd)
+        nll = model.nll(img,cmd)
         val_res_recon_error += recon_error.item()
-        val_res_perplexity += nll.item()
+        val_res_nll += nll.item()
     model.train()
-    return val_res_recon_error / cnt, val_res_perplexity / cnt
+    return val_res_recon_error / cnt, val_res_nll / cnt
 
 
 def main(argv):

@@ -5,6 +5,7 @@ from torch.distributions.normal import Normal
 from torch.distributions import kl_divergence
 from .utils import weights_init
 import numpy as np
+import math
 import pdb
 
 class VAE(nn.Module):
@@ -45,33 +46,25 @@ class VAE(nn.Module):
         self.apply(weights_init)
 
     def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
+        std = logvar.mul(0.5).exp()
         eps = torch.randn_like(std)
         return eps * std + mu
 
     def kl_div(self, mu, logvar):
         return (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).sum().div(mu.shape[0])
 
-    def prior_prob(self, dist, z):
-        B,C,H,W = dist.mean.shape
-        z = z.view(-1,B,C,H,W)
-        N = z.shape[0]
-        return dist.log_prob(z).sum((2,3,4)).view(N,B)
+    def _log_prob(self, dist, z):
+        return dist.log_prob(z).sum((2,3,4))
 
-    def out_prob(self, x, x_tilde):
-        fz  = -(x_tilde -x).pow(2).sum((2,3,4)).div(2)
-        dim = math.prod(x.shape[1:])
-        C  = 0.5 * dim * np.log(2*math.pi)
-        return fz - C
-
-    def logprob(self, x, cmd=None, N=25):
+    def nll(self, x, cmd=None, N=25):
         mu, logvar = self.encoder(x).chunk(2, dim=1)
-        q_z = Normal(mu, logvar)
+        q_z = Normal(mu, logvar.mul(0.5).exp())
         p_z = Normal(torch.zeros_like(mu), torch.ones_like(mu))
-        z = q_z.sample((N,)).view(-1,*mu.shape[1:])
-        x_tilde = self.decoder(z).view(N,*x.shape)
-        logpx = self.out_prob(x,x_tilde) + self.prior_prob(p_z,z) - self.prior_prob(q_z, z)
-        return (logpx.logsumexp(dim=0) - np.log(N)).sum(0)
+        z = q_z.sample((N,))
+        x_tilde = self.decoder(z.view(-1,*mu.shape[1:])).view(N,*x.shape)
+        pxz = Normal(x_tilde, torch.ones_like(x_tilde))
+        logpx = self._log_prob(pxz,x) + self._log_prob(p_z,z) - self._log_prob(q_z, z)
+        return -((logpx.logsumexp(dim=0) - np.log(N)).sum(0))
 
 
     def forward(self, x, cmd=None):
@@ -81,7 +74,7 @@ class VAE(nn.Module):
         x_tilde = self.decoder(sample)
         loss_recons = (self.noise(x_tilde) - self.noise(x)).pow(2).sum().div(mu.shape[0])
         loss = loss_recons + self.beta * kl_div
-        return loss, x_tilde, loss_recons, kl_div
+        return loss, x_tilde, loss_recons*mu.shape[0], kl_div*mu.shape[0]
 
     def sample(self, B=1, cmd=None):
         mu = torch.zeros(B,self.zdim,2,2).to(self.encoder[0].weight.device)

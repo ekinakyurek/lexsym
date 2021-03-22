@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .utils import weights_init
+import math
+from torch.distributions.normal import Normal
 import pdb
 
 class VectorQuantizedVAE(nn.Module):
@@ -68,7 +70,17 @@ class VectorQuantizedVAE(nn.Module):
         x_tilde = self.decode(z_q_x, cmds)
         recon_error = F.mse_loss(x_tilde, x)
         loss += recon_error
-        return loss, x_tilde, recon_error, nll, z_q_x, latents
+        return loss, x_tilde, recon_error * math.prod(x.shape), nll, z_q_x, latents
+
+    def _log_prob(self, dist, z):
+        return dist.log_prob(z).sum((1,2,3))
+
+    def nll(self, x, cmds=None):
+        z_q_x, latents, loss, nll = self.encode(x, cmds)
+        x_tilde = self.decode(z_q_x, cmds)
+        pxz = Normal(x_tilde, torch.ones_like(x_tilde))
+        return (-self._log_prob(pxz,x) + nll).sum()
+
 
 class ResBlock(nn.Module):
     def __init__(self, dim, idim):
@@ -103,63 +115,6 @@ class VectorQuantizerEMA(nn.Module):
 
         self._epsilon = epsilon
 
-    def forward2(self, inputs):
-        # convert inputs from BCHW -> BHWC
-        inputs = inputs.permute(0, 2, 3, 1).contiguous()
-        input_shape = inputs.shape
-
-        # Flatten input
-        flatten = inputs.view(-1, self._embedding_dim)
-
-        # Calculate distances
-        distances = (
-            flatten.pow(2).sum(1, keepdim=True)
-            - 2 * flatten @ self._embedding.weight.t()
-            + self._embedding.weight.pow(2).sum(1, keepdim=True).t()
-        )
-
-        # Encoding
-        encoding_indices = torch.argmin(distances, dim=1)
-        encodings = encoding_indices.view(input_shape[0:3])
-        one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
-        one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
-        # Quantize and unflatten
-        # quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
-
-        quantized = self._embedding(encodings)
-
-        # Use EMA to update the embedding vectors
-        if self.training:
-            self._ema_cluster_size = self._ema_cluster_size * self._decay + \
-                                     (1 - self._decay) * one_hot.sum(dim=0)
-
-            # Laplace smoothing of the cluster size
-            n = torch.sum(self._ema_cluster_size.data)
-            self._ema_cluster_size = (
-                (self._ema_cluster_size + self._epsilon)
-                / (n + self._num_embeddings * self._epsilon) * n)
-
-            dw = one_hot.t() @ flatten
-            self._ema_w.data = self._ema_w * self._decay + (1 - self._decay) * dw
-
-            self._embedding.weight.data = self._ema_w / self._ema_cluster_size.unsqueeze(1)
-
-        # Loss
-        e_latent_loss = F.mse_loss(quantized.detach(), inputs)
-        q_latent_loss = F.mse_loss(quantized, inputs.detach())
-        loss = q_latent_loss + self._commitment_cost * e_latent_loss
-
-
-        # Straight Through Estimator
-        quantized = inputs + (quantized - inputs).detach()
-        avg_probs = torch.mean(one_hot, dim=0)
-        nll = -torch.log(avg_probs + 1e-10).sum() * inputs.shape[0]
-        #nll = torch.ones(1) # TODO
-
-        # convert quantized from BHWC -> BCHW
-        quantized = quantized.permute(0, 3, 1, 2).contiguous()
-        return quantized, encodings, loss,  nll
-
     def forward(self, inputs, cmds=None):
         # convert inputs from BCHW -> BHWC
         inputs = inputs.permute(0, 2, 3, 1).contiguous()
@@ -178,11 +133,8 @@ class VectorQuantizerEMA(nn.Module):
         # Encoding
         encoding_indices = torch.argmin(distances, dim=1)
         encodings = encoding_indices.view(input_shape[0:3])
-        one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
-        one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
         # Quantize and unflatten
         # quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
-
         if cmds is not None and self.cmdproc:
             ###
             dists = distances.view(input_shape[0],input_shape[1] * input_shape[2], self._num_embeddings) # [B, HW, n_codes]
@@ -200,6 +152,8 @@ class VectorQuantizerEMA(nn.Module):
 
         # Use EMA to update the embedding vectors
         if self.training:
+            one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
+            one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
             self._ema_cluster_size = self._ema_cluster_size * self._decay + \
                                      (1 - self._decay) * one_hot.sum(dim=0)
 
@@ -223,8 +177,8 @@ class VectorQuantizerEMA(nn.Module):
 
         # Straight Through Estimator
         quantized = inputs + (quantized - inputs).detach()
-        avg_probs = torch.mean(one_hot, dim=0)
-        nll = -torch.log(avg_probs + 1e-10).sum()
+        nll = -(torch.numel(encodings) * math.log(self._num_embeddings))
+        #nll = -torch.log(avg_probs + 1e-10).sum()
         #nll = torch.ones(1) # TODO
 
         # convert quantized from BHWC -> BCHW
