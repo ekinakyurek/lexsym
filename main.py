@@ -246,10 +246,10 @@ def train_vae():
                         img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
                         res   =  torch.cat((recon,img),0).clip_(0,1)
                         T(make_grid(res)).convert("RGB").save(os.path.join(vis_folder,f"{i}_{j}.png"))
-                        if FLAGS.modeltype=="VAE":
-                            sample, _ = model.sample(B=32)
-                            sample = sample.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
-                            T(make_grid(sample.clip_(0,1))).convert("RGB").save(os.path.join(vis_folder,f"prior_{i}_{j}.png"))
+                        #if FLAGS.modeltype=="VAE":
+                        sample, _ = model.sample(B=32)
+                        sample = sample.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
+                        T(make_grid(sample.clip_(0,1))).convert("RGB").save(os.path.join(vis_folder,f"prior_{i}_{j}.png"))
 
     torch.save(model,os.path.join(vis_folder,f"model.pt"))
 
