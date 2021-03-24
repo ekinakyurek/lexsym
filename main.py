@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from src.lex import FilterModel
 from src.vqvae import VectorQuantizedVAE
-from src.vae import VAE
+from src.vae import VAE, CVAE
 from src.dae import DAE
 
 from data.shapes import ShapeDataset
@@ -320,7 +320,7 @@ def train_cvae():
             with torch.no_grad():
                 print('%d iterations' % (i+1))
                 print(len(test_loader))
-                val_recon, val_loss = evaluate_vqvae(model, test_loader)
+                val_recon, val_loss = evaluate_cvae(model, test_loader)
                 print('val_recon_error: %.6f' % val_recon)
                 print('val_loss: %.6f' % val_loss)
                 test_iter = itertools.cycle(iter(test_loader))
@@ -352,7 +352,7 @@ def evaluate_vqvae(model,loader):
     model.train()
     return val_res_recon_error / cnt, val_res_nll / cnt
 
-def evaluate_vvae(model,loader):
+def evaluate_cvae(model,loader):
     val_recon_error = 0.0
     val_loss = 0.0
     model.eval()

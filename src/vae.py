@@ -91,23 +91,26 @@ class VAE(nn.Module):
 
 class CVAE(nn.Module):
     def __init__(self, input_dim, dim, z_dim, rnn_dim, vocab, beta=1.0, noise=None):
+        super().__init__()
         #pretrained vae
-        self.vae = VAE(input_dim, dim, z_dim, beta=1.0, noise=None)
+        self.vae = VAE(input_dim, dim, z_dim, beta=beta, noise=noise)
 
         self.lang_encoder = Encoder(vocab,
                                     rnn_dim,
                                     rnn_dim,
-                                    nlayers=2,
+                                    2,#n_layers
                                     dropout=0.1)
 
-        self.proj = nn.Linear(rnn_dim,2*2*z_dim)
+        self.proj = nn.Linear(2*rnn_dim,2*2*z_dim)
 
     def forward(self, x, cmd):
-        z_rnn= self.proj(self.lang_encoder(cmd)[0].mean(dim=1))
+        outputs, _ = self.lang_encoder(cmd)
+        z_rnn = self.proj(outputs.mean(dim=0))
         z_vae = self.vae.feats(x)
-        return F.mse_loss(z_rnn.flatten(),z_vae.flatten())
+        return (z_rnn.flatten()-z_vae.flatten()).pow(2).sum().div(z_rnn.shape[0])
 
     def predict(self, cmd):
-        z_rnn = self.proj(self.lang_encoder(cmd)[0].mean(dim=1))
-        x_tilde = self.decoder(sample.view(z_rnn.shape[0],2,2,-1))
+        outputs, _ = self.lang_encoder(cmd)
+        z_rnn = self.proj(outputs.mean(dim=0))
+        x_tilde = self.vae.decoder(z_rnn.view(z_rnn.shape[0],-1,2,2))
         return x_tilde

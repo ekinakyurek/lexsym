@@ -8,6 +8,7 @@ from torch.nn.utils.rnn import pad_sequence
 import torchvision.transforms as transforms
 from PIL import Image
 import pdb
+from seq2seq import Vocab
 
 class ShapeDataset(object):
     def __init__(self, root="data/shapes/", split="train", transform=None, vocab=None, color="RGB"):
@@ -20,16 +21,14 @@ class ShapeDataset(object):
              self.annotations = [self.annotations[i] for i in json.load(reader)[self.split]]
 
         if vocab is None:
-            self.vocab = {"*pad*": 0}
+            self.vocab = Vocab()
             for annotation in self.annotations:
                 desc = annotation["description"]
                 for tok in desc.split():
-                    if tok not in self.vocab:
-                        self.vocab[tok] = len(self.vocab)
+                    self.vocab.add(tok)
         else:
             self.vocab = vocab
 
-        self.rev_vocab = {v: k for k, v in self.vocab.items()}
 
         random.shuffle(self.annotations)
         print(f"{split}: {len(self.annotations)}")
@@ -68,10 +67,10 @@ class ShapeDataset(object):
         return len(self.annotations)
 
     def decode(self, cmd):
-        return [self.rev_vocab[int(i)] for i in cmd]
+        return self.vocab.decode(cmd)
 
     def collate(self, batch):
         cmds, imgs = zip(*batch)
         enc_cmds = [torch.tensor([self.vocab[w] for w in cmd]) for cmd in cmds]
-        pad_cmds = pad_sequence(enc_cmds, padding_value=0)
+        pad_cmds = pad_sequence(enc_cmds, padding_value=vocab.pad())
         return pad_cmds, torch.stack(imgs, dim=0)

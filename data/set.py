@@ -61,9 +61,10 @@ class SetDataset(object):
     def __getitem__(self, i):
         annotation = self.annotations[i]
         image = annotation["image"]
-        desc = annotation["text"].split(" , ")
+        #desc = annotation["text"].split(" , ")
         image = self.transform(Image.open(os.path.join(self.root,  image)).convert(self.color))
-        return [d.split() for d in desc], image
+        #return [d.split() for d in desc], image
+        return annotation["text"].split(), image
 
     def __len__(self):
         return len(self.annotations)
@@ -73,6 +74,7 @@ class SetDataset(object):
 
     def collate(self, batch):
         cmds, imgs = zip(*batch)
-        enc_cmds = [torch.tensor([self.vocab[w] for obj in cmd for w in obj]) for cmd in cmds]
-        padded_cmds = pad_sequence(enc_cmds, padding_value=0)
+        #enc_cmds = [torch.tensor([self.vocab[w] for obj in cmd for w in obj]) for cmd in cmds]
+        enc_cmds = [torch.tensor(self.vocab.encode(cmd)) for cmd in cmds]
+        padded_cmds = pad_sequence(enc_cmds, padding_value=self.vocab.pad())
         return padded_cmds, torch.stack(imgs, dim=0)
