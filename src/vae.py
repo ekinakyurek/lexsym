@@ -7,6 +7,7 @@ from .utils import weights_init
 import numpy as np
 import math
 import pdb
+from seq2seq import Encoder, EncDec
 
 class VAE(nn.Module):
     def __init__(self, input_dim, dim, z_dim, beta=1.0, noise=None):
@@ -56,6 +57,10 @@ class VAE(nn.Module):
     def _log_prob(self, dist, z):
         return dist.log_prob(z).sum((2,3,4))
 
+    def feats(self,x,cmds=None):
+        mu, logvar = self.encoder(x).chunk(2, dim=1)
+        return self.reparameterize(mu, logvar)
+
     def nll(self, x, cmd=None, N=25):
         mu, logvar = self.encoder(x).chunk(2, dim=1)
         q_z = Normal(mu, logvar.mul(0.5).exp())
@@ -82,3 +87,27 @@ class VAE(nn.Module):
         z = p_z.sample()
         x_tilde = self.decoder(z)
         return x_tilde, z
+
+
+class CVAE(nn.Module):
+    def __init__(self, input_dim, dim, z_dim, rnn_dim, vocab, beta=1.0, noise=None):
+        #pretrained vae
+        self.vae = VAE(input_dim, dim, z_dim, beta=1.0, noise=None)
+
+        self.lang_encoder = Encoder(vocab,
+                                    rnn_dim,
+                                    rnn_dim,
+                                    nlayers=2,
+                                    dropout=0.1)
+
+        self.proj = nn.Linear(rnn_dim,2*2*z_dim)
+
+    def forward(self, x, cmd):
+        z_rnn= self.proj(self.lang_encoder(cmd)[0].mean(dim=1))
+        z_vae = self.vae.feats(x)
+        return F.mse_loss(z_rnn.flatten(),z_vae.flatten())
+
+    def predict(self, cmd):
+        z_rnn = self.proj(self.lang_encoder(cmd)[0].mean(dim=1))
+        x_tilde = self.decoder(sample.view(z_rnn.shape[0],2,2,-1))
+        return x_tilde
