@@ -72,5 +72,5 @@ class ShapeDataset(object):
     def collate(self, batch):
         cmds, imgs = zip(*batch)
         enc_cmds = [torch.tensor([self.vocab[w] for w in cmd]) for cmd in cmds]
-        pad_cmds = pad_sequence(enc_cmds, padding_value=vocab.pad())
+        pad_cmds = pad_sequence(enc_cmds, padding_value=self.vocab.pad())
         return pad_cmds, torch.stack(imgs, dim=0)
