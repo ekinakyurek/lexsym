@@ -57,12 +57,21 @@ class VAE(nn.Module):
     def _log_prob(self, dist, z):
         return dist.log_prob(z).sum((2,3,4))
 
-    def feats(self,x,cmds=None):
+    def encode(self,x,cmd=None):
         mu, logvar = self.encoder(x).chunk(2, dim=1)
-        return self.reparameterize(mu, logvar)
+        return  mu, logvar
+
+    def forward(self, x, cmd=None):
+        mu, logvar = self.encode(x,cmd)
+        z = self.reparameterize(mu, logvar)
+        kl_div = self.kl_div(mu, logvar)
+        x_tilde = self.decoder(z)
+        loss_recons = (self.noise(x_tilde) - self.noise(x)).pow(2).sum().div(mu.shape[0])
+        loss = loss_recons + self.beta * kl_div
+        return loss, x_tilde, loss_recons*mu.shape[0], kl_div*mu.shape[0]
 
     def nll(self, x, cmd=None, N=25):
-        mu, logvar = self.encoder(x).chunk(2, dim=1)
+        mu, logvar = self.encode(x,cmd)
         q_z = Normal(mu, logvar.mul(0.5).exp())
         p_z = Normal(torch.zeros_like(mu), torch.ones_like(mu))
         z = q_z.sample((N,))
@@ -70,16 +79,6 @@ class VAE(nn.Module):
         pxz = Normal(x_tilde, torch.ones_like(x_tilde))
         logpx = self._log_prob(pxz,x) + self._log_prob(p_z,z) - self._log_prob(q_z, z)
         return -((logpx.logsumexp(dim=0) - np.log(N)).sum(0))
-
-
-    def forward(self, x, cmd=None):
-        mu, logvar = self.encoder(x).chunk(2, dim=1)
-        kl_div = self.kl_div(mu, logvar)
-        sample  = self.reparameterize(mu, logvar)
-        x_tilde = self.decoder(sample)
-        loss_recons = (self.noise(x_tilde) - self.noise(x)).pow(2).sum().div(mu.shape[0])
-        loss = loss_recons + self.beta * kl_div
-        return loss, x_tilde, loss_recons*mu.shape[0], kl_div*mu.shape[0]
 
     def sample(self, B=1, cmd=None):
         mu = torch.zeros(B,self.zdim,2,2).to(self.encoder[0].weight.device)
@@ -101,16 +100,20 @@ class CVAE(nn.Module):
                                     2,#n_layers
                                     dropout=0.1)
 
-        self.proj = nn.Linear(2*rnn_dim,2*2*z_dim)
+        self.proj = nn.Linear(2*rnn_dim,2*(2*2*z_dim))
 
     def forward(self, x, cmd):
         outputs, _ = self.lang_encoder(cmd)
-        z_rnn = self.proj(outputs.mean(dim=0))
-        z_vae = self.vae.feats(x)
-        return (z_rnn.flatten()-z_vae.flatten()).pow(2).sum().div(z_rnn.shape[0])
+        params1 = self.proj(outputs.mean(dim=0))
+        params2 = self.vae.encoder(x)
+        return (params1.flatten()-params2.flatten()).pow(2).sum().div(params1.shape[0])
+        #return (z_rnn.flatten()-z_vae.flatten()).pow(2).sum().div(z_rnn.shape[0])
 
     def predict(self, cmd):
         outputs, _ = self.lang_encoder(cmd)
-        z_rnn = self.proj(outputs.mean(dim=0))
-        x_tilde = self.vae.decoder(z_rnn.view(z_rnn.shape[0],-1,2,2))
+        mu, logvar = self.proj(outputs.mean(dim=0)).chunk(2, dim=1)
+        mu = mu.view(mu.shape[0],-1,2,2)
+        logvar = logvar.view(logvar.shape[0],-1,2,2)
+        z_rnn = self.vae.reparameterize(mu, logvar)
+        x_tilde = self.vae.decoder(z_rnn)
         return x_tilde
