@@ -18,7 +18,7 @@ from src.dae import DAE
 from data.shapes import ShapeDataset
 from data.set import SetDataset
 from data.scan import SCANDataset
-
+from data.clevr import CLEVRDataset
 import torchvision
 from torchvision.utils import make_grid, save_image
 import itertools
@@ -145,7 +145,7 @@ flags.DEFINE_integer("rnn_n_layers", 2, "")
 flags.DEFINE_float("rnn_drop", 0.1, "")
 flags.DEFINE_integer("n_latent", 24, "")
 flags.DEFINE_integer("n_batch", 128, "")
-flags.DEFINE_integer("n_iter", 25000, "")
+flags.DEFINE_integer("n_iter", 100000, "")
 flags.DEFINE_integer("n_codes", 10, "")
 flags.DEFINE_integer("seed", 0, "")
 flags.DEFINE_float("beta", 5.0, "")
@@ -179,12 +179,16 @@ def set_seed(seed):
 
 def train_vae():
     set_seed(FLAGS.seed)
+
     if FLAGS.datatype == "setpp":
         train  = SetDataset("data/setpp/", split="train")
         test   = SetDataset("data/setpp/", split="test", transform=train.transform, vocab=train.vocab)
     elif FLAGS.datatype == "shapes":
         train  = ShapeDataset("data/shapes/",split="train")
         test   = ShapeDataset("data/shapes/",split="test", transform=train.transform, vocab=train.vocab)
+    elif FLAGS.datatype == "clevr":
+        train  = CLEVRDataset("data/clevr/", split="trainA")
+        test   = CLEVRDataset("data/clevr/", split="valB", transform=train.transform, vocab=train.vocab)
     else:
         train  = SCANDataset("data/scan/",split="train")
         test   = SCANDataset("data/scan/",split="test", transform=train.transform, vocab=train.vocab)
@@ -194,8 +198,8 @@ def train_vae():
     print("vis folder:", vis_folder)
 
 
-    loader = DataLoader(train, batch_size=FLAGS.n_batch, shuffle=True, collate_fn=train.collate, pin_memory=True)
-    test_loader = DataLoader(test, batch_size=32, shuffle=True,collate_fn=train.collate, pin_memory=True)
+    loader = DataLoader(train, batch_size=FLAGS.n_batch, shuffle=True, collate_fn=train.collate, num_workers=4, pin_memory=True)
+    test_loader = DataLoader(test, batch_size=32, shuffle=True,collate_fn=train.collate,  num_workers=4, pin_memory=True)
 
     if FLAGS.modeltype == "VQVAE":
         model = VectorQuantizedVAE(3, FLAGS.h_dim,
@@ -206,11 +210,12 @@ def train_vae():
                                      epsilon=FLAGS.epsilon,
                                      beta=FLAGS.beta,
                                      cmdproc=False,
+                                     size=train.size,
                                    ).to(device)
     elif FLAGS.modeltype == "VAE":
-        model = VAE(3, FLAGS.h_dim, FLAGS.n_latent, beta=FLAGS.beta).to(device)
+        model = VAE(3, FLAGS.h_dim, FLAGS.n_latent, beta=FLAGS.beta, size=train.size).to(device)
     elif FLAGS.modeltype ==  "DAE":
-        model = DAE(3, latentdim=FLAGS.n_latent*4*4).to(device)
+        model = DAE(3, latentdim=FLAGS.n_latent*4*4, size=train.size).to(device)
     else:
         error("Unknown Model Type")
 
@@ -237,13 +242,13 @@ def train_vae():
             with torch.no_grad():
                 print('%d iterations' % (i+1))
                 print('recon_error: %.6f' % (train_res_recon_error / cnt))
-                #print('nll: %.6f' % np.mean(train_res_nll[-100:]))
-                print(len(test_loader))
-                val_recon, val_perp = evaluate_vqvae(model, test_loader)
-                print('val_recon_error: %.6f' % val_recon)
-                print('val_nll: %.6f' % val_perp)
+                # #print('nll: %.6f' % np.mean(train_res_nll[-100:]))
+                # print(len(test_loader))
+                # val_recon, val_perp = evaluate_vqvae(model, test_loader)
+                # print('val_recon_error: %.6f' % val_recon)
+                # print('val_nll: %.6f' % val_perp)
                 test_iter = itertools.cycle(iter(test_loader))
-                if (i+1) % 500 == 0:
+                if (i+1) % 100 == 0:
                     T = torchvision.transforms.ToPILImage(mode=train.color)
                     for j in range(5):
                         cmd, img = next(test_iter)
@@ -268,6 +273,9 @@ def train_cvae():
     elif FLAGS.datatype == "shapes":
         train  = ShapeDataset("data/shapes/",split="train")
         test   = ShapeDataset("data/shapes/",split="test", transform=train.transform, vocab=train.vocab)
+    elif FLAGS.datatype == "clevr":
+        train  = CLEVRDataset("data/clevr/", split="trainA")
+        test   = CLEVRDataset("data/clevr/", split="valB", transform=train.transform, vocab=train.vocab)
     else:
         train  = SCANDataset("data/scan/",split="train")
         test   = SCANDataset("data/scan/",split="test", transform=train.transform, vocab=train.vocab)
@@ -290,7 +298,7 @@ def train_cvae():
         #                              cmdproc=False,
         #                            ).to(device)
     elif FLAGS.modeltype == "CVAE":
-        model = CVAE(3, FLAGS.h_dim, FLAGS.n_latent, beta=FLAGS.beta, rnn_dim=FLAGS.rnn_dim, vocab=train.vocab)
+        model = CVAE(3, FLAGS.h_dim, FLAGS.n_latent, beta=FLAGS.beta, rnn_dim=FLAGS.rnn_dim, vocab=train.vocab, size=train.size)
         model.vae.load_state_dict(torch.load(FLAGS.vae_path).state_dict())
         model = model.to(device)
         for p in model.vae.parameters():

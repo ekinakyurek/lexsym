@@ -10,11 +10,11 @@ import pdb
 from seq2seq import Encoder, EncDec
 
 class VAE(nn.Module):
-    def __init__(self, input_dim, dim, z_dim, beta=1.0, noise=None):
+    def __init__(self, input_dim, dim, z_dim, beta=1.0, noise=None, size=(64,64)):
         super().__init__()
         self.beta = beta
         self.zdim = z_dim
-
+        self.size = size
         if noise is not None:
             self.noise = noise
         else:
@@ -31,6 +31,11 @@ class VAE(nn.Module):
             nn.ReLU(True),
             nn.Conv2d(dim, z_dim * 2, 3, 1, 0),
         )
+
+        with torch.no_grad():
+            mu, _= self.encoder(torch.ones(1,3,*size)).chunk(2, dim=1)
+            self.latent_shape= mu.shape[1:]
+
 
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(z_dim, dim, 3, 1, 0),
@@ -81,7 +86,7 @@ class VAE(nn.Module):
         return -((logpx.logsumexp(dim=0) - np.log(N)).sum(0))
 
     def sample(self, B=1, cmd=None):
-        mu = torch.zeros(B,self.zdim,2,2).to(self.encoder[0].weight.device)
+        mu = torch.zeros(B,*self.latent_shape).to(self.encoder[0].weight.device)
         p_z = Normal(mu, torch.ones_like(mu))
         z = p_z.sample()
         x_tilde = self.decoder(z)
@@ -89,10 +94,10 @@ class VAE(nn.Module):
 
 
 class CVAE(nn.Module):
-    def __init__(self, input_dim, dim, z_dim, rnn_dim, vocab, beta=1.0, noise=None):
+    def __init__(self, input_dim, dim, z_dim, rnn_dim, vocab, beta=1.0, noise=None, size=(64,64)):
         super().__init__()
         #pretrained vae
-        self.vae = VAE(input_dim, dim, z_dim, beta=beta, noise=noise)
+        self.vae = VAE(ienput_dim, dim, z_dim, beta=beta, noise=noise,size=size)
 
         self.lang_encoder = Encoder(vocab,
                                     rnn_dim,
@@ -100,7 +105,7 @@ class CVAE(nn.Module):
                                     2,#n_layers
                                     dropout=0.1)
 
-        self.proj = nn.Linear(2*rnn_dim,2*(2*2*z_dim))
+        self.proj = nn.Linear(2*rnn_dim,2*(self.vae.latent_shape))
 
     def forward(self, x, cmd):
         outputs, _ = self.lang_encoder(cmd)
@@ -112,8 +117,8 @@ class CVAE(nn.Module):
     def predict(self, cmd):
         outputs, _ = self.lang_encoder(cmd)
         mu, logvar = self.proj(outputs.mean(dim=0)).chunk(2, dim=1)
-        mu = mu.view(mu.shape[0],-1,2,2)
-        logvar = logvar.view(logvar.shape[0],-1,2,2)
+        mu = mu.view(mu.shape[0], self.vae.latent_shape)
+        logvar = logvar.view(logvar.shape[0],self.vae.latent_shape)
         z_rnn = self.vae.reparameterize(mu, logvar)
         x_tilde = self.vae.decoder(z_rnn)
         return x_tilde

@@ -11,11 +11,12 @@ import pdb
 from seq2seq import Vocab
 
 class SetDataset(object):
-    def __init__(self, root="data/setpp/", split="train", transform=None, vocab=None, color="RGB"):
+    def __init__(self, root="data/setpp/", split="train", transform=None, vocab=None, color="RGB", size=(64,64)):
         self.root  = root
         self.split = split
         self.color = color
-
+        self.size = size
+        
         with open(self.root+"data.json") as reader:
             self.annotations = json.load(reader)
         with open(self.root+"splits.json") as reader:

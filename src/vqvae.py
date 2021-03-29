@@ -8,7 +8,7 @@ from torch.distributions.normal import Normal
 import pdb
 
 class VectorQuantizedVAE(nn.Module):
-    def __init__(self, input_dim, dim, edim, n_codes=16, cc=0.25, decay=0.99, epsilon=1e-5, beta=1.0, cmdproc=False):
+    def __init__(self, input_dim, dim, edim, n_codes=16, cc=0.25, decay=0.99, epsilon=1e-5, beta=1.0, cmdproc=False, size=(64,64)):
         super().__init__()
 
         self.h_dim = dim
@@ -28,7 +28,11 @@ class VectorQuantizedVAE(nn.Module):
             nn.Conv2d(2*dim, edim, 1, 1),
         )
 
-        self.codebook1 = VectorQuantizerEMA(n_codes, edim,  cc=cc, decay=decay, epsilon=epsilon, beta=beta, cmdproc=cmdproc)
+        with torch.no_grad():
+            mu = self.encoder(torch.ones(1,3,*size))
+            self.latent_shape= (self.l_dim,mu.shape[2], mu.shape[3])
+
+        self.codebook1 = VectorQuantizerEMA(n_codes, self.latent_shape, cc=cc, decay=decay, epsilon=epsilon, beta=beta, cmdproc=cmdproc)
         #
         # self.codebook2 = VectorQuantizerEMA(n_codes, edim,  cc=cc, decay=decay, epsilon=epsilon)
         #
@@ -105,13 +109,14 @@ class ResBlock(nn.Module):
         return self.activation(x + self.block(x))
 
 class VectorQuantizerEMA(nn.Module):
-    def __init__(self, n_codes, dim, cc=0.25, decay=0.99, epsilon=1e-5, beta=1.0, cmdproc=False):
+    def __init__(self, n_codes, latent_shape, cc=0.25, decay=0.99, epsilon=1e-5, beta=1.0, cmdproc=False):
         super(VectorQuantizerEMA, self).__init__()
 
         self.cmdproc = cmdproc
         self.beta = beta
+        self._latent_shape = latent_shape
 
-        self._embedding_dim = dim
+        self._embedding_dim = latent_shape[0]
         self._num_embeddings = n_codes
 
         self._embedding = nn.Embedding(self._num_embeddings, self._embedding_dim)
@@ -196,7 +201,7 @@ class VectorQuantizerEMA(nn.Module):
 
 
     def sample(self, B=1, cmd=None):
-        encodings = np.random.choice(np.arange(self._num_embeddings), (B, 8, 8))
+        encodings = np.random.choice(np.arange(self._num_embeddings), (B, *self._latent_shape[2,3]))
         encodings = torch.from_numpy(encodings).to(self._embedding.weight.device)
         quantized = self._embedding(encodings)
         quantized = quantized.permute(0, 3, 1, 2).contiguous()

@@ -60,10 +60,11 @@ def preprocess_scan(folder="scan/images"):
 
 
 class SCANDataset(object):
-    def __init__(self, root="data/scan/", split="train", transform=None, vocab=None, color="HSV"):
+    def __init__(self, root="data/scan/", split="train", transform=None, vocab=None, color="HSV", size=(80,80)):
         self.root  = root
         self.split = split
         self.color = color
+        self.size  = self.size
 
         with open(self.root+"data.json") as reader:
             self.annotations = json.load(reader)
