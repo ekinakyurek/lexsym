@@ -7,7 +7,7 @@ import random
 from torch.nn.utils.rnn import pad_sequence
 import torchvision.transforms as transforms
 from PIL import Image
-import pdb
+#import pdb
 from seq2seq import Vocab
 
 class SetDataset(object):
@@ -16,7 +16,7 @@ class SetDataset(object):
         self.split = split
         self.color = color
         self.size = size
-        
+
         with open(self.root+"data.json") as reader:
             self.annotations = json.load(reader)
         with open(self.root+"splits.json") as reader:

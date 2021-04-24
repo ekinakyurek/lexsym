@@ -7,7 +7,7 @@ from absl import app, flags
 from .attention import SimpleAttention
 from .utils import weight_top_p, trim
 from .projection import SoftAlign
-import pdb
+#import pdb
 
 EPS = 1e-7
 FLAGS = flags.FLAGS
@@ -261,7 +261,8 @@ class Decoder(nn.Module):
             )
 
             if FLAGS.debug:
-                pdb.set_trace()
+                pass
+                #pdb.set_trace()
 
             hiddens.append(hidden)
             all_preds.append(pred)
@@ -328,7 +329,7 @@ class Decoder(nn.Module):
             new_pred[np.flatnonzero(done), pad] += 99999
             logits = (logits + new_pred).detach()
 
-            # pdb.set_trace()
+            # #pdb.set_trace()
             if greedy:
                 toks = torch.argmax(logits, dim=1)
                 done[torch.eq(toks,eos).cpu().numpy()] = True
@@ -437,7 +438,7 @@ class Decoder(nn.Module):
             onehots = F.gumbel_softmax(logits, tau=temp, hard=True, dim=-1)
             toks = torch.argmax(onehots.detach(), dim=1)
             done[torch.eq(toks,eos).cpu().numpy()] = True
-            # pdb.set_trace()
+            # #pdb.set_trace()
 
             running_proj[t, range(n_batch), toks] = 1
             running_out[t, range(n_batch)] = toks
@@ -578,7 +579,7 @@ class Decoder(nn.Module):
             logp = F.log_softmax(preds,dim=-1)
             if FLAGS.debug:
                 print("preds here")
-                pdb.set_trace()
+                #pdb.set_trace()
             out_tgt = ref_tokens[1:,:]
             logprob = -self.nll(logp.permute(1,2,0), out_tgt.transpose(0,1)).sum(dim=-1)
         return logprob

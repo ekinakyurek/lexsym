@@ -22,7 +22,7 @@ for n_codes in 12 24 32; do
                                 --beta ${beta} \
                                 --modeltype ${modeltype} \
                                 --datatype ${datatype} \
-                      	        --lr ${lr}
+                       	        --lr ${lr}
           fi
       done
     done

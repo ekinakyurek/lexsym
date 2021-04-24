@@ -46,6 +46,15 @@ class Vocab(object):
     def decode(self, seq):
         return [self._rev_contents[i] for i in seq]
 
+    def decode_plus(self, seq):
+        start = 0
+        end = len(seq)-1
+        if self.sos() in seq:
+            start = seq.index(self.sos())
+        if self.eos() in seq:
+            end   = seq.index(self.eos())
+        return [self._rev_contents[i] for i in seq[start:end+1] if i != self.pad()]
+
     def get(self, i):
         return self._rev_contents[i]
 

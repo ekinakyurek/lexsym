@@ -1,11 +1,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .utils import weights_init
+from .utils import weights_init, top_k_logits, fig2tensor
 import math
 import numpy as np
+import json
 from torch.distributions.normal import Normal
-import pdb
+from seq2seq import TransformerDecoderv2, TransformerDecoderLayerv2
+import operator
+import matplotlib.pyplot as plt
+import matplotlib.ticker as plticker
+import torchvision.transforms.functional as TF
+#import pdb
+EPS = 1e-7
 
 class VectorQuantizedVAE(nn.Module):
     def __init__(self, input_dim, dim, edim, n_codes=16, cc=0.25, decay=0.99, epsilon=1e-5, beta=1.0, cmdproc=False, size=(64,64)):
@@ -31,6 +38,7 @@ class VectorQuantizedVAE(nn.Module):
         with torch.no_grad():
             mu = self.encoder(torch.ones(1,3,*size))
             self.latent_shape= (self.l_dim,mu.shape[2], mu.shape[3])
+            print("latent_shape: ", self.latent_shape)
 
         self.codebook1 = VectorQuantizerEMA(n_codes, self.latent_shape, cc=cc, decay=decay, epsilon=epsilon, beta=beta, cmdproc=cmdproc)
         #
@@ -87,6 +95,10 @@ class VectorQuantizedVAE(nn.Module):
 
     def _log_prob(self, dist, z):
         return dist.log_prob(z).sum((1,2,3))
+
+    @property
+    def n_codes(self):
+        return self.codebook1._num_embeddings
 
     def nll(self, x, cmds=None):
         z_q_x, latents, loss, nll = self.encode(x, cmds)
@@ -163,24 +175,24 @@ class VectorQuantizerEMA(nn.Module):
             cmd_loss = 0
 
         quantized = self._embedding(encodings)
-
-        # Use EMA to update the embedding vectors
-        if self.training:
-            one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
-            one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
-            self._ema_cluster_size = self._ema_cluster_size * self._decay + \
-                                     (1 - self._decay) * one_hot.sum(dim=0)
-
-            # Laplace smoothing of the cluster size
-            n = torch.sum(self._ema_cluster_size.data)
-            self._ema_cluster_size = (
-                (self._ema_cluster_size + self._epsilon)
-                / (n + self._num_embeddings * self._epsilon) * n)
-
-            dw = one_hot.t() @ flatten
-            self._ema_w.data = self._ema_w * self._decay + (1 - self._decay) * dw
-
-            self._embedding.weight.data = self._ema_w / self._ema_cluster_size.unsqueeze(1)
+        #
+        # # Use EMA to update the embedding vectors
+        # if self.training:
+        #     one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
+        #     one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
+        #     self._ema_cluster_size = self._ema_cluster_size * self._decay + \
+        #                              (1 - self._decay) * one_hot.sum(dim=0)
+        #
+        #     # Laplace smoothing of the cluster size
+        #     n = torch.sum(self._ema_cluster_size.data)
+        #     self._ema_cluster_size = (
+        #         (self._ema_cluster_size + self._epsilon)
+        #         / (n + self._num_embeddings * self._epsilon) * n)
+        #
+        #     dw = one_hot.t() @ flatten
+        #     self._ema_w.data = self._ema_w * self._decay + (1 - self._decay) * dw
+        #
+        #     self._embedding.weight.data = self._ema_w / self._ema_cluster_size.unsqueeze(1)
 
         # Loss
         e_latent_loss = F.mse_loss(quantized.detach(), inputs)
@@ -201,8 +213,221 @@ class VectorQuantizerEMA(nn.Module):
 
 
     def sample(self, B=1, cmd=None):
-        encodings = np.random.choice(np.arange(self._num_embeddings), (B, *self._latent_shape[2,3]))
+        encodings = np.random.choice(np.arange(self._num_embeddings), (B, *self._latent_shape[1:]))
         encodings = torch.from_numpy(encodings).to(self._embedding.weight.device)
         quantized = self._embedding(encodings)
         quantized = quantized.permute(0, 3, 1, 2).contiguous()
         return quantized, encodings
+
+
+class CVQVAE(nn.Module):
+    def __init__(self, input_dim, dim, edim, vocab, rnn_dim=256, max_len=50, **kwargs):
+        super(CVQVAE, self).__init__()
+        self.vqvae = VectorQuantizedVAE(input_dim, dim, edim, **kwargs)
+        self.vocab = vocab
+        self.rnn_dim = rnn_dim
+        self.drop = nn.Dropout(0.2)
+        self.highdrop = nn.Dropout(0.5)
+        self.outlen = self.vqvae.latent_shape[1]*self.vqvae.latent_shape[2]
+        # Encoder Transformer
+        self.inp_embed = nn.Embedding(len(self.vocab), rnn_dim, padding_idx=self.vocab.pad())
+        self.inp_pos_embed = nn.Parameter(torch.zeros(max_len,1,rnn_dim))
+        self.encoder = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=rnn_dim, dim_feedforward=4*rnn_dim, nhead=4), num_layers=4)
+        # Decoder Transformer
+        self.out_embed = nn.Embedding(self.vqvae.n_codes, rnn_dim)
+        self.out_posx_embed = nn.Parameter(torch.zeros(self.vqvae.latent_shape[1], 1, rnn_dim // 2))
+        self.out_posy_embed = nn.Parameter(torch.zeros(self.vqvae.latent_shape[2], 1, rnn_dim // 2))
+        self.start_embed = nn.Parameter(torch.zeros(1, 1, rnn_dim))
+        self.decoder = TransformerDecoderv2(TransformerDecoderLayerv2(d_model=rnn_dim, dim_feedforward=4*rnn_dim, nhead=4), return_attentions=True, num_layers=4)
+        # Final Projection
+        self.seq_picker =  nn.Linear(rnn_dim, 3, bias=False)
+        self.proj = nn.Linear(rnn_dim,self.vqvae.n_codes)
+        self.set_tgt_mask()
+        self.set_self_copy()
+
+    def get_src_lexicon(self, lexfile):
+        with open(lexfile, "r") as f:
+            matchings = json.load(f)
+        self.matchings = matchings
+        self.rev_matchings = {}
+        for (k,stats) in self.matchings.items():
+             code = max(stats.items(), key=operator.itemgetter(1))[0]
+             self.rev_matchings[int(code)] = k
+        lexicon = np.zeros((len(self.vocab),self.vqvae.n_codes))
+        src_keys = list(self.vocab._contents.keys())
+        for (k, matching) in matchings.items():
+            ki = src_keys.index(k)
+            for (v,c) in matching.items():
+                vi = int(v)
+                lexicon[ki,vi] = c
+        lexicon = torch.from_numpy(lexicon).float()
+        return torch.softmax(lexicon / 0.1, dim=1)
+
+    def set_tgt_mask(self):
+        mask = torch.tril(torch.ones(self.outlen, self.outlen)) == 0.0
+        self.register_buffer("tgt_mask", mask)
+
+    def set_self_copy(self):
+        self.self_copy_proj = nn.Embedding(self.vqvae.n_codes,self.vqvae.n_codes)
+        self.self_copy_proj.weight.data = torch.eye(self.vqvae.n_codes)
+        self.self_copy_proj.weight.requires_grad = False
+
+    def set_src_copy(self, lexicon, requires_grad=False):
+        if torch.is_tensor(lexicon):
+            self.src_copy_proj = nn.Embedding(lexicon.shape[0],lexicon.shape[1])
+            self.src_copy_proj.weight.data = lexicon
+            self.src_copy_proj.weight.requires_grad = requires_grad
+        else:
+            self.src_copy_proj = lexicon
+
+    def get_tgt_mask(self,T=None):
+        if T is None:
+            return self.tgt_mask
+        else:
+            return self.tgt_mask[:T,:T]
+
+    def forward(self, x, cmd):
+        S, B = cmd.shape
+        # Language processing
+        cmd_embd = self.inp_embed(cmd) + self.inp_pos_embed[:S,:,:] # S X B X D
+        cmd_embd = self.drop(cmd_embd)
+        mask = (cmd.transpose(0,1) == self.vocab.pad()) # B X S
+        source = self.encoder(cmd_embd, src_key_padding_mask=mask) # S X B X D
+        # Image processing
+        _, encodings, *_ = self.vqvae.encode(x) # B x H x W
+        enc_T = encodings.view(B,-1).transpose(0,1) # L X B (L = HW)
+        L, _ = enc_T.shape
+        dec_inp_ids = enc_T[:-1,:]
+        posx_embed = self.out_posx_embed[np.arange(L-1)  %  self.vqvae.latent_shape[1]]
+        posy_embed = self.out_posy_embed[np.arange(L-1) //  self.vqvae.latent_shape[1]]
+        out_pos_embed = torch.cat((posx_embed,posy_embed),dim=-1)
+        out_embed   = self.out_embed(dec_inp_ids) + out_pos_embed
+        out_embed   = self.drop(out_embed)
+        start_embed = self.start_embed.expand(1, B, self.rnn_dim)
+        dec_inp_embeds  = torch.cat((start_embed,out_embed),dim=0)
+        #Decode
+        # pdb.set_trace()
+        tgt_mask = self.get_tgt_mask()
+        decoded, src_att_weights, self_att_weights = self.decoder(dec_inp_embeds, source, memory_key_padding_mask=mask, tgt_mask=tgt_mask)
+        #decoded =  self.decoder(dec_inp_embeds, source, memory_key_padding_mask=mask, tgt_mask=tgt_mask)
+        #decoded: L x B x D
+        ### DO COPY
+        src_att_probs = src_att_weights # B x L x S FIXME: I patched torch package to remove dropout from returned attweights
+        src_proj = self.src_copy_proj(cmd).transpose(0,1) # S x B x N -> B x S x N
+        src_translate_prob = src_att_probs @ src_proj # B x L x N
+        src_translate_prob = src_translate_prob.transpose(0,1) # L x B x N
+        self_att_weights = self.drop(self_att_weights[:,:,1:]) + EPS
+        self_att_probs = F.softmax(torch.log(self_att_weights),dim=-1)
+        self_proj = self.self_copy_proj(dec_inp_ids).transpose(0,1)
+        self_translate_prob = self_att_probs @ self_proj
+        self_translate_prob = self_translate_prob.transpose(0,1)
+        seq_weights = F.softmax(self.seq_picker(decoded),dim=-1).unsqueeze(2) + EPS # L x B x 2 -> L x B x 1 x 2
+        ###
+        logits  = F.softmax(self.proj(self.highdrop(decoded)),dim=-1)  # L x B x N
+        #logits  = self.proj(decoded)  # L x B x N
+        ###
+        outs = torch.stack((logits,src_translate_prob,self_translate_prob),3) # L x B x N x 2
+        logits = torch.log((seq_weights * outs).sum(-1) + EPS)  # L x B x N x 2 -> # L x B x N
+        #Loss
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), enc_T.flatten())
+        return loss
+
+    @torch.no_grad()
+    def predict(self, cmd, top_k=None, sample=True):
+        S, B = cmd.shape
+        C, H, W = self.vqvae.latent_shape
+
+        cmd_embd  = self.inp_embed(cmd) + self.inp_pos_embed[:S,:,:]
+        mask = (cmd.transpose(0,1) == self.vocab.pad())
+        source = self.encoder(cmd_embd, src_key_padding_mask=mask)
+
+        out_embed = torch.zeros(H*W, B, self.rnn_dim, device=source.device)
+        next_embed = self.start_embed
+        encodings = []
+        src_proj = self.src_copy_proj(cmd).transpose(0,1)
+        for i in range(self.outlen):
+            out_embed[i] = next_embed
+            tgt_mask = self.get_tgt_mask(i+1)
+            decoded, src_att_weights, self_att_weights =  self.decoder(out_embed[:i+1], source, memory_key_padding_mask=mask, tgt_mask=tgt_mask)
+            #decoded =  self.decoder(out_embed[:i+1], source, memory_key_padding_mask=mask, tgt_mask=tgt_mask)
+            src_att_probs = src_att_weights[:,-1:,:]  # B x 1 x S
+            src_translate_prob = src_att_probs @ src_proj # B x 1 x N
+            src_translate_prob = src_translate_prob.squeeze(1)  # B x N
+            if i > 0:
+                self_att_probs = F.softmax(torch.log(self_att_weights[:,-1:,1:]+EPS), dim=-1) # B x 1 x L
+                self_proj = self.self_copy_proj(torch.stack(encodings,dim=1))
+                self_translate_prob = self_att_probs @ self_proj # B x 1 x N
+                self_translate_prob = self_translate_prob.squeeze(1)  # B x N
+            else:
+                self_translate_prob = F.softmax(src_translate_prob * 0, dim=-1) # uniform
+            seq_weights = F.softmax(self.seq_picker(decoded[-1]),dim=-1) + EPS # B x 2
+            logits = F.softmax(self.proj(decoded[-1]),dim=-1) # B X N
+            outs = torch.stack((logits,src_translate_prob,self_translate_prob),2)
+            logits = torch.log((seq_weights.unsqueeze(1) * outs).sum(-1) + EPS)
+            # pdb.set_trace()
+            #logits = self.proj(decoded[-1])
+            if top_k is not None:
+                logits = top_k_logits(logits, top_k)
+            probs = F.softmax(logits, dim=-1)
+            if sample:
+                idx = torch.multinomial(probs, num_samples=1).squeeze(-1)
+            else:
+                idx = torch.argmax(probs, dim=-1)
+            encodings.append(idx)
+            posx_embed = self.out_posx_embed[i %  self.vqvae.latent_shape[1]]
+            posy_embed = self.out_posy_embed[i //  self.vqvae.latent_shape[1]]
+            out_pos_embed = torch.cat((posx_embed,posy_embed),dim=-1)
+            next_embed = (self.out_embed(idx) + out_pos_embed).unsqueeze(0)
+
+        encodings = torch.stack(encodings,dim=1)
+        quantized = self.vqvae.codebook1._embedding(encodings) # B,HW,C
+        z_rnn = quantized.transpose(1,2).contiguous().view(B,C,H,W)
+        x_tilde = self.vqvae.decode(z_rnn)
+        return x_tilde, encodings.view(B,H,W)
+
+    def make_number_grid(self, encodings):
+        B = encodings.shape[0]
+        return torch.stack([self.number_matrix(encodings[i]) for i in range(B)],dim=0)
+
+    def number_matrix(self, encoding, size=(512,512)):
+        # Open image file
+        h, w = encoding.shape
+        encoding = encoding.numpy()
+        # Set up figure
+        my_dpi=300
+        fig=plt.figure(figsize=(size[0] / my_dpi, size[1] / my_dpi),dpi=my_dpi)
+        ax=fig.add_subplot(111)
+
+        # Remove whitespace from around the image
+        fig.subplots_adjust(left=0,right=1,bottom=0,top=1)
+
+        # Set the gridding interval: here we use the major tick interval
+        myInterval= 1.0 / h
+        loc = plticker.MultipleLocator(base=myInterval)
+        ax.xaxis.set_major_locator(loc)
+        ax.yaxis.set_major_locator(loc)
+
+        # Add the grid
+        ax.grid(which='major', axis='both', linestyle='-', linewidth=0.2)
+
+        # Find number of gridsquares in x and y direction
+        nx=h
+        ny=w
+        colors = ['yellow', 'blue', 'gray', 'brown', 'cyan', 'purple', 'red', 'green']
+        # Add some labels to the gridsquares
+        for j in range(ny):
+            y = myInterval/2 + j*myInterval
+            for i in range(nx):
+                x = myInterval/2. + i*myInterval
+                code = encoding[j,i]
+                color='black'
+                if code in self.rev_matchings:
+                     if self.rev_matchings[code] in colors:
+                         color =  self.rev_matchings[code]
+                ax.text(x,y,str(encoding[j,i]),ha='center',va='center', fontsize=4.5, color=color)
+
+        # Save the figure
+        figtensor =  fig2tensor(fig)
+        plt.cla()
+        plt.close(fig)
+        return figtensor

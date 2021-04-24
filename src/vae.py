@@ -6,7 +6,7 @@ from torch.distributions import kl_divergence
 from .utils import weights_init
 import numpy as np
 import math
-import pdb
+#import pdb
 from seq2seq import Encoder, EncDec
 
 class VAE(nn.Module):
@@ -35,6 +35,7 @@ class VAE(nn.Module):
         with torch.no_grad():
             mu, _= self.encoder(torch.ones(1,3,*size)).chunk(2, dim=1)
             self.latent_shape= mu.shape[1:]
+            print("latent_shape: ", self.latent_shape)
 
 
         self.decoder = nn.Sequential(
@@ -94,31 +95,34 @@ class VAE(nn.Module):
 
 
 class CVAE(nn.Module):
-    def __init__(self, input_dim, dim, z_dim, rnn_dim, vocab, beta=1.0, noise=None, size=(64,64)):
+    def __init__(self, input_dim, dim, z_dim, vocab, rnn_dim=512, beta=1.0, noise=None, size=(64,64)):
         super().__init__()
         #pretrained vae
-        self.vae = VAE(ienput_dim, dim, z_dim, beta=beta, noise=noise,size=size)
+        self.vae = VAE(input_dim, dim, z_dim, beta=beta, noise=noise,size=size)
 
         self.lang_encoder = Encoder(vocab,
                                     rnn_dim,
                                     rnn_dim,
                                     2,#n_layers
-                                    dropout=0.1)
+                                    dropout=0.1,
+                                    bidirectional=False)
 
-        self.proj = nn.Linear(2*rnn_dim,2*(self.vae.latent_shape))
+        self.proj = nn.Linear(rnn_dim,2*math.prod(self.vae.latent_shape))
 
     def forward(self, x, cmd):
-        outputs, _ = self.lang_encoder(cmd)
-        params1 = self.proj(outputs.mean(dim=0))
+        _, (h, _) = self.lang_encoder(cmd)
+        hidden = h[-1]
+        params1 = self.proj(hidden)
         params2 = self.vae.encoder(x)
         return (params1.flatten()-params2.flatten()).pow(2).sum().div(params1.shape[0])
         #return (z_rnn.flatten()-z_vae.flatten()).pow(2).sum().div(z_rnn.shape[0])
 
     def predict(self, cmd):
-        outputs, _ = self.lang_encoder(cmd)
-        mu, logvar = self.proj(outputs.mean(dim=0)).chunk(2, dim=1)
-        mu = mu.view(mu.shape[0], self.vae.latent_shape)
-        logvar = logvar.view(logvar.shape[0],self.vae.latent_shape)
+        _, (h, _) = self.lang_encoder(cmd)
+        hidden = h[-1]
+        mu, logvar = self.proj(hidden).chunk(2, dim=1)
+        mu = mu.view(mu.shape[0], *self.vae.latent_shape)
+        logvar = logvar.view(logvar.shape[0],*self.vae.latent_shape)
         z_rnn = self.vae.reparameterize(mu, logvar)
         x_tilde = self.vae.decoder(z_rnn)
         return x_tilde

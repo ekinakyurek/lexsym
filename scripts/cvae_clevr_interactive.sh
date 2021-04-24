@@ -1,40 +1,45 @@
 #!/bin/bash
-#SBATCH --job-name=simplecolor
-#SBATCH --time=48:00:00
-#SBATCH --cpus-per-task=5
+#SBATCH --job-name=clevr
+#SBATCH --time=58:00:00
+#SBATCH --cpus-per-task=12
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
 #SBATCH --qos=high
 #SBATCH --constrain=xeon-g6
 #SBATCH --gres=gpu:volta:1
-#SBATCH --array=1-54
-n_batch=128
+#SBATCH --array=1-1
+
+
+n_batch=256
 h_dim=64
 seed=0
-modeltype=VQVAE
-datatype=setpp
+modeltype=CVAE
+datatype=clevr
 i=0
 
-for n_codes in 12 16 24; do
-  for n_latent in 16 32 64; do
-    for beta in 1.0 5.0 10.0; do
-      for lr in 0.001 0.0003; do
+ulimit -n 10000
+ulimit -x unlimited
+
+for n_latent in 8; do
+  for beta in 1.0; do
+    for lr in 0.0003; do
           i=$((i + 1));
-          if [[ $i -eq $SLURM_ARRAY_TASK_ID ]]; then
-            exp_folder="vis/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/logs/"
+          if [[ $i -eq $1 ]]; then
+            exp_folder="vis/${datatype}/${modeltype}/beta_${beta}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/logs/"
+            vae_path="vis/${datatype}/VAE/beta_${beta}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/model.pt"
             mkdir -p $exp_folder
             PYTHONHASHSEED=${seed} python -u main.py \
                                 --seed ${seed} \
                                 --n_batch ${n_batch} \
                       	        --n_latent ${n_latent} \
-                                --n_codes ${n_codes} \
                              	  --h_dim ${h_dim} \
                                 --beta ${beta} \
                                 --modeltype ${modeltype} \
                                 --datatype ${datatype} \
-                      	        --lr ${lr} > ${exp_folder}/eval.${seed}.out 2> ${exp_folder}/eval.${seed}.err
+                                --rnn_dim 1600 \
+                                --vae_path ${vae_path} \
+                      	        --lr ${lr}
           fi
-      done
     done
   done
 done

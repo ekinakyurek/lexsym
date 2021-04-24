@@ -7,7 +7,7 @@ import random
 from .data import collate, eval_format
 import collections
 import math
-import pdb
+#import pdb
 LossTrack = collections.namedtuple('LossTrack', 'nll mlogpyx pointkl')
 
 class Mutex(nn.Module):

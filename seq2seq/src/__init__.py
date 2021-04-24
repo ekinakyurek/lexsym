@@ -5,3 +5,4 @@ from .vocab import Vocab
 from .utils import RecordLoss, batch_seqs, weight_top_p, NoamLR
 from .projection import SoftAlign
 from .multiiter import MultiIter
+from .transformers import TransformerDecoderv2, TransformerDecoderLayerv2

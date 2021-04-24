@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Lexgen Visualize</title>
+    <!-- <script src="https://cdn.plot.ly/plotly-latest.min.js"></script> -->
+  	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.0/jquery.min.js"></script>
+  	<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.0/css/bootstrap.min.css">
+  	<!-- <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script> -->
+  	<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.0/umd/popper.min.js"></script>
+  	<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.0/js/bootstrap.min.js"></script>
+  	<!-- <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet"> -->
+  	<!-- <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.2.0/css/font-awesome.min.css" rel="stylesheet"> -->
+  	<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.9.0/css/all.min.css" rel="stylesheet">
+
+  	<link rel="stylesheet" type="text/css" href="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/css/bootstrap.min.css">
+
+  	<!-- <script src="https://code.jquery.com/jquery-3.3./1.slim.min.js"></script> -->
+  	<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.6/umd/popper.min.js"></script>
+  	<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/js/bootstrap.min.js"></script>
+    <script src="http://zeptojs.com/zepto.min.js"></script>
+    <style>
+      :root {
+      --grid-cols: 1;
+      --grid-rows: 1;
+    }
+
+    #container {
+      width: 100%;
+      height: 100%; /* added */
+      display: grid;
+      grid-gap: 0.1em;
+      grid-template-rows: repeat(var(--grid-rows), 1fr);
+      grid-template-columns: repeat(var(--grid-cols),minmax(10px , 1fr));
+    }
+
+    #formblock{
+      width: 60%;
+    }
+
+    .grid-item {
+      padding: 0em;
+      border: 1px solid #ddd;
+      text-align: center;
+    }
+
+    #myimg {
+      width:256px;
+      height:256px;
+    }
+    </style>
+    <script type="text/javascript">
+      var grid_size = parseInt({{ grid_size }});
+
+      function makeRows(rows, cols) {
+        const container = document.getElementById("container");
+        container.style.setProperty('--grid-rows', rows);
+        container.style.setProperty('--grid-cols', cols);
+        console.log(container)
+        for (c = 0; c < (rows * cols); c++) {
+          let cell = document.createElement("INPUT");
+          cell.setAttribute("type","text");
+          cell.setAttribute("value","0");
+          cell.setAttribute("id","cell"+c);
+          cell.setAttribute("name","cell"+c);
+          cell.setAttribute("size","3");
+          cell.setAttribute("maxlength","3");
+          container.appendChild(cell).className = "grid-item";
+        };
+      };
+
+    function set_encoding(encoding){
+      const container = document.getElementById("container");
+      for (c = 1; c <= (grid_size * grid_size); c++) {
+        container.childNodes[c].setAttribute("value", encoding[c-1]);
+      };
+    }
+     function get_next(){
+        $.ajax({
+          type: 'GET',
+          url: "/get_next",
+          success: function(data){
+                     result = JSON.parse(data);
+                     document.getElementById("myimg").src =  'data:image/jpeg;base64,' + result['img']
+                     set_encoding(result['encodings'])
+                  }
+          });
+      };
+
+       function decode(){
+       $("#form1").submit(function (e) {
+         e.preventDefault();
+         var form = $(this);
+         console.log(form.serialize())
+          $.ajax({
+            type: "POST",
+            url: "/decode",
+            data: form.serialize(),
+            success: function(data) {
+              // callback code here
+              result = JSON.parse(data);
+              console.log(result);
+              document.getElementById("myimg").src =  'data:image/jpeg;base64,' + result['img'];
+             }
+          });
+        });
+      }
+         // $.ajax({
+         //   type: 'POST',
+         //   url: "/decode",
+         //   data: content,
+         //   success: function(data){
+         //              result = JSON.parse(data);
+         //              set_encoding(result['encodings'])
+         //           }
+         //   });
+       // };
+
+      window.onload = function() {
+          makeRows(grid_size, grid_size);
+      };
+    </script>
+</head>
+<body>
+
+    <img id="myimg" src="" alt="reconstruction"></img>
+
+    <div id="formblock">
+      <form id="form1"  action="" method="POST">
+        <div id="container">
+        </div>
+        <input type="submit" id="submitButton" name="submitButton" value="Submit" onclick="decode();">
+        <button type="button" onclick="get_next()"> Next </button>
+        <!-- <button type="button" onclick="decode()"> Decode </button> -->
+      </form>
+    </div>
+
+
+
+
+</body>
+</html>

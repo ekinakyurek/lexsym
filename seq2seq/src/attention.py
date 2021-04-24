@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-import pdb
+#import pdb
 
 class SimpleAttention(nn.Module):
     def __init__(self, n_features, n_hidden, key=False, copy=False, query=True, memory=False):

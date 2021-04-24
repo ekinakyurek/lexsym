@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+import pdb
 
 class Encoder(nn.Module):
     def __init__(
@@ -22,12 +23,14 @@ class Encoder(nn.Module):
         )
 
     def forward(self, data, lens=None):
+
         if len(data.shape) == 3:
             emb    = torch.matmul(data, self.embed.weight)
             tokens = torch.argmax(data.detach(),dim=-1)
             emb    = emb * (tokens != self.vocab.pad()).unsqueeze(2).float()
         else:
             emb   = self.embed(data)
+
         if lens is not None:
             padded_sequence = self.embed_dropout(emb)
             total_length = padded_sequence.shape[0]

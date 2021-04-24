@@ -11,9 +11,10 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.lex import FilterModel
-from src.vqvae import VectorQuantizedVAE
+from src.vqvae import VectorQuantizedVAE, CVQVAE
 from src.vae import VAE, CVAE
 from src.dae import DAE
+# from src.utils import make_number_grid
 
 from data.shapes import ShapeDataset
 from data.set import SetDataset
@@ -55,7 +56,7 @@ def train_lexgen():
 
     for i in range(50):
         print(i)
-        for j, (cmd, img) in enumerate(loader):
+        for j, (cmd, img, _) in enumerate(loader):
             loss, *_ = model(cmd.to(device), img.to(device))
             optimizer.zero_grad()
             loss.backward()
@@ -66,7 +67,7 @@ def train_lexgen():
 
             itloader = iter(loader)
             for i in range(3):
-                cmd, img = next(itloader)
+                cmd, img, _ = next(itloader)
                 print(cmd)
                 loss, _, results, attentions, text_attentions = model(cmd.to(device), img.to(device))
                 visualizations.append(visualize(
@@ -148,7 +149,7 @@ flags.DEFINE_integer("n_batch", 128, "")
 flags.DEFINE_integer("n_iter", 100000, "")
 flags.DEFINE_integer("n_codes", 10, "")
 flags.DEFINE_integer("seed", 0, "")
-flags.DEFINE_float("beta", 5.0, "")
+flags.DEFINE_float("beta", 1.0, "")
 flags.DEFINE_float("commitment_cost", 0.25, "")
 flags.DEFINE_string("datatype","setpp","")
 flags.DEFINE_string("modeltype","VQVAE","")
@@ -161,10 +162,14 @@ flags.DEFINE_bool("highdroptest", False,"")
 flags.DEFINE_float("highdropvalue",0.,"")
 flags.DEFINE_bool("copy", False,"")
 flags.DEFINE_string("vae_path","","pretrained vae path")
+flags.DEFINE_string("lex_path","","prelearned lexicon")
+flags.DEFINE_string("model_path","","prelearned model")
+flags.DEFINE_bool("extract_codes",False,"")
+flags.DEFINE_bool("test",False,"")
 
 def flags_to_path():
     root = os.path.join("vis", FLAGS.datatype, FLAGS.modeltype)
-    if FLAGS.modeltype == "VQVAE":
+    if "VQVAE" in FLAGS.modeltype:
         return os.path.join(root,
                     f"beta_{FLAGS.beta}_ncodes_{FLAGS.n_codes}_ldim_{FLAGS.n_latent}_dim_{FLAGS.h_dim}_lr_{FLAGS.lr}")
     else:
@@ -197,10 +202,6 @@ def train_vae():
     os.makedirs(vis_folder,exist_ok = True)
     print("vis folder:", vis_folder)
 
-
-    loader = DataLoader(train, batch_size=FLAGS.n_batch, shuffle=True, collate_fn=train.collate, num_workers=4, pin_memory=True)
-    test_loader = DataLoader(test, batch_size=32, shuffle=True,collate_fn=train.collate,  num_workers=4, pin_memory=True)
-
     if FLAGS.modeltype == "VQVAE":
         model = VectorQuantizedVAE(3, FLAGS.h_dim,
                                      FLAGS.n_latent,
@@ -223,10 +224,20 @@ def train_vae():
 
     train_res_recon_error = 0.
     cnt = 0.
+
+    loader = DataLoader(train, batch_size=FLAGS.n_batch, shuffle=True, collate_fn=train.collate, num_workers=4)
+    test_loader = DataLoader(test, batch_size=32, shuffle=True, collate_fn=train.collate,  num_workers=4)
+    generator = iter(loader)
+
     model.train()
-    iterator = itertools.cycle(iter(loader))
+
     for i in range(FLAGS.n_iter):
-        (cmd, img) = next(iterator)
+        try:
+            cmd, img, _ = next(generator)
+        except StopIteration:
+            generator = iter(loader)
+            cmd, img, _  = next(generator)
+
         img = img.to(device)
         cmd = cmd.to(device)
         optimizer.zero_grad()
@@ -238,7 +249,7 @@ def train_vae():
         cnt += img.shape[0]
         # train_res_nll.append(nll.item())
 
-        if (i+1) % 100 == 0:
+        if (i+1) % 1000 == 0:
             with torch.no_grad():
                 print('%d iterations' % (i+1))
                 print('recon_error: %.6f' % (train_res_recon_error / cnt))
@@ -247,17 +258,18 @@ def train_vae():
                 # val_recon, val_perp = evaluate_vqvae(model, test_loader)
                 # print('val_recon_error: %.6f' % val_recon)
                 # print('val_nll: %.6f' % val_perp)
-                test_iter = itertools.cycle(iter(test_loader))
-                if (i+1) % 100 == 0:
+                if (i+1) % 1000 == 0:
                     T = torchvision.transforms.ToPILImage(mode=train.color)
+                    test_iter = iter(test_loader)
                     for j in range(5):
-                        cmd, img = next(test_iter)
-                        loss, recon, recon_error, *_= model(img.to(device), cmd.to(device))
+                        cmd, img, _  = next(test_iter)
+                        img = img.to(device)
+                        cmd = cmd.to(device)
+                        loss, recon, recon_error, *_ = model(img, cmd)
                         recon = recon.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
                         img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
-                        res   =  torch.cat((recon,img),0).clip_(0,1)
+                        res   = torch.cat((recon,img),0).clip_(0,1)
                         T(make_grid(res)).convert("RGB").save(os.path.join(vis_folder,f"{i}_{j}.png"))
-                        #if FLAGS.modeltype=="VAE":
                         sample, _ = model.sample(B=32)
                         sample = sample.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
                         T(make_grid(sample.clip_(0,1))).convert("RGB").save(os.path.join(vis_folder,f"prior_{i}_{j}.png"))
@@ -283,73 +295,147 @@ def train_cvae():
     vis_folder = flags_to_path()
     os.makedirs(vis_folder,exist_ok = True)
     print("vis folder:", vis_folder)
-    loader = DataLoader(train, batch_size=FLAGS.n_batch, shuffle=True, collate_fn=train.collate, pin_memory=True)
-    test_loader = DataLoader(test, batch_size=32, shuffle=True,collate_fn=train.collate, pin_memory=True)
-
-    if FLAGS.modeltype == "CVQVAE":
-        error("Unknown Model Type")
-        # model = VectorQuantizedVAE(3, FLAGS.h_dim,
-        #                              FLAGS.n_latent,
-        #                              n_codes=FLAGS.n_codes,
-        #                              cc=FLAGS.commitment_cost,
-        #                              decay=FLAGS.decay,
-        #                              epsilon=FLAGS.epsilon,
-        #                              beta=FLAGS.beta,
-        #                              cmdproc=False,
-        #                            ).to(device)
-    elif FLAGS.modeltype == "CVAE":
-        model = CVAE(3, FLAGS.h_dim, FLAGS.n_latent, beta=FLAGS.beta, rnn_dim=FLAGS.rnn_dim, vocab=train.vocab, size=train.size)
-        model.vae.load_state_dict(torch.load(FLAGS.vae_path).state_dict())
+    if FLAGS.test:
+        model = torch.load(FLAGS.model_path)
         model = model.to(device)
-        for p in model.vae.parameters():
-            p.requires_grad = False
+
+        loader = DataLoader(train, batch_size=FLAGS.n_batch, shuffle=True, collate_fn=train.collate, num_workers=4)
+        test_loader = DataLoader(test, batch_size=36, shuffle=True,collate_fn=train.collate, num_workers=4)
     else:
-        error("Unknown Model Type")
+        if FLAGS.modeltype == "CVQVAE":
+            model = CVQVAE(3,
+                           FLAGS.h_dim,
+                           FLAGS.n_latent,
+                           train.vocab,
+                           rnn_dim=FLAGS.rnn_dim,
+                           n_codes=FLAGS.n_codes,
+                           cc=FLAGS.commitment_cost,
+                           decay=FLAGS.decay,
+                           epsilon=FLAGS.epsilon,
+                           beta=FLAGS.beta,
+                           cmdproc=False,
+                           size=train.size,
+                           ).to(device)
+            model.vqvae.load_state_dict(torch.load(FLAGS.vae_path).state_dict())
+            for p in model.vqvae.parameters():
+                p.requires_grad = False
+            if FLAGS.lex_path != "":
+                model.set_src_copy(model.get_src_lexicon(FLAGS.lex_path))
 
-    optimizer = optim.Adam(model.parameters(), lr=FLAGS.lr)
+            model = model.to(device)
 
-    train_loss= 0.
-    cnt = 0.
-    model.train()
-    iterator = itertools.cycle(iter(loader))
-    for i in range(FLAGS.n_iter):
-        (cmd, img) = next(iterator)
-        img = img.to(device)
-        cmd = cmd.to(device)
-        optimizer.zero_grad()
-        loss = model(img, cmd)
-        loss.backward()
-        optimizer.step()
+            loader = DataLoader(train, batch_size=FLAGS.n_batch, shuffle=True, collate_fn=train.collate, num_workers=4)
+            test_loader = DataLoader(test, batch_size=32, shuffle=True,collate_fn=train.collate, num_workers=4)
 
-        train_loss += loss * img.shape[0]
-        cnt += img.shape[0]
-
-        if (i+1) % 100 == 0:
+            model.eval()
+            T = torchvision.transforms.ToPILImage(mode=train.color)
             with torch.no_grad():
-                print('%d iterations' % (i+1))
-                print(len(test_loader))
-                val_recon, val_loss = evaluate_cvae(model, test_loader)
-                print('val_recon_error: %.6f' % val_recon)
-                print('val_loss: %.6f' % val_loss)
-                test_iter = itertools.cycle(iter(test_loader))
-                if (i+1) % 500 == 0:
+                sample, _ = model.vqvae.sample(B=32)
+                sample = sample.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
+                T(make_grid(sample.clip_(0,1))).convert("RGB").save(os.path.join(vis_folder,f"initial_samples.png"))
+                generator = iter(test_loader)
+                cmd, img, _ = next(generator)
+                cmd = cmd.to(device)
+                img = img.to(device)
+                _, recon, *_ = model.vqvae(img, cmd)
+                recon = recon.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
+                img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
+                res   = torch.cat((recon,img),0).clip_(0,1)
+                T(make_grid(res)).convert("RGB").save(os.path.join(vis_folder,f"initial_recons.png"))
+
+        elif FLAGS.modeltype == "CVAE":
+            model = CVAE(3, FLAGS.h_dim, FLAGS.n_latent, train.vocab, beta=FLAGS.beta, rnn_dim=FLAGS.rnn_dim, size=train.size)
+            model.vae.load_state_dict(torch.load(FLAGS.vae_path).state_dict())
+            model = model.to(device)
+            for p in model.vae.parameters():
+                p.requires_grad = False
+        else:
+            error("Unknown Model Type")
+
+        optimizer = optim.Adam(model.parameters(), lr=FLAGS.lr)
+        train_loss= 0.
+        cnt = 0.
+
+
+        generator = iter(loader)
+        model.train()
+        model.vqvae.eval()
+        for i in tqdm(range(FLAGS.n_iter)):
+            try:
+                cmd, img, _ = next(generator)
+            except StopIteration:
+                generator = iter(loader)
+                cmd, img, _  = next(generator)
+
+
+            cmd = cmd.to(device)
+            img = img.to(device)
+
+            optimizer.zero_grad()
+            loss = model(img, cmd)
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss * img.shape[0]
+            cnt += img.shape[0]
+
+            if i==10 or (i+1) % 1000 == 0:
+                model.eval()
+                with torch.no_grad():
+                    print('%d iterations' % (i+1))
+                    print('%.6f train loss' % (train_loss / cnt))
+                    val_recon, val_loss = evaluate_cvae(model, test_loader)
+                    print('val_recon_error: %.6f' % val_recon)
+                    print('val_loss: %.6f' % val_loss)
                     T = torchvision.transforms.ToPILImage(mode=train.color)
+                    test_iter = iter(test_loader)
                     for j in range(5):
-                        cmd, img = next(test_iter)
-                        recon = model.predict(cmd.to(device))
+                        cmd, img, _  = next(test_iter)
+                        cmd = cmd.to(device)
+                        img = img.to(device)
+                        recon, pred_encodings = model.predict(cmd, sample=True, top_k=10)
+                        pred_encodings =model.make_number_grid(pred_encodings.cpu())
+                        _, encodings, *_ = model.vqvae.encode(img)
+                        encodings = model.make_number_grid(encodings.cpu())
+                        encodings = torch.cat((pred_encodings,encodings),0)
                         recon = recon.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
                         img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
                         res   = torch.cat((recon,img),0).clip_(0,1)
-                        T(make_grid(res)).convert("RGB").save(os.path.join(vis_folder,f"{i}_{j}.png"))
+                        T(make_grid(encodings, nrow=encodings.shape[0]//2)).convert("RGB").save(os.path.join(vis_folder,f"{i}_{j}_encodings.png"))
+                        T(make_grid(res, nrow=res.shape[0]//2)).convert("RGB").save(os.path.join(vis_folder,f"{i}_{j}.png"))
 
-    torch.save(model,os.path.join(vis_folder,f"model.pt"))
+                        print("saved")
+                model.train()
+                model.vqvae.eval()
+        torch.save(model,os.path.join(vis_folder,f"model.pt"))
+
+    model.eval()
+    with torch.no_grad():
+        val_recon, val_loss = evaluate_cvae(model, test_loader)
+        print('val_recon_error: %.6f' % val_recon)
+        print('val_loss: %.6f' % val_loss)
+        T = torchvision.transforms.ToPILImage(mode=train.color)
+        test_iter = iter(test_loader)
+        for j in range(5):
+            cmd, img, _  = next(test_iter)
+            cmd = cmd.to(device)
+            img = img.to(device)
+            print("sampling")
+            recon = model.predict(cmd, top_k=10, sample=True)
+            print("sampled")
+            recon = recon.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
+            img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
+            res   = torch.cat((recon,img),0).clip_(0,1)
+            print("saving samples")
+            T(make_grid(res, nrow=res.shape[0]//2)).convert("RGB").save(os.path.join(vis_folder,f"eval_{j}.png"))
+            print("saved")
+
 
 def evaluate_vqvae(model,loader):
     val_res_recon_error = 0.0
     val_res_nll = 0.0
-    model.eval()
     cnt = 0
-    for (cmd, img) in loader:
+    for (cmd, img, _) in loader:
         img = img.to(device)
         cmd = cmd.to(device)
         cnt += img.shape[0]
@@ -363,24 +449,85 @@ def evaluate_vqvae(model,loader):
 def evaluate_cvae(model,loader):
     val_recon_error = 0.0
     val_loss = 0.0
-    model.eval()
     cnt = 0
-    for (cmd, img) in loader:
+    for (cmd, img, _) in loader:
         img = img.to(device)
         cmd = cmd.to(device)
         cnt += img.shape[0]
         loss  = model(img, cmd)
-        x_tilde = model.predict(cmd)
+        x_tilde, _ = model.predict(cmd)
         val_recon_error += (x_tilde-img).pow(2).sum().item()
-        val_loss += loss.item()
-    model.train()
+        val_loss += loss.item() * img.shape[0]
+        if cnt > 100:
+            break
     return val_recon_error / cnt, val_loss / cnt
 
-def main(argv):
-    if FLAGS.modeltype.startswith("C"):
-        train_cvae()
+def img2code():
+    set_seed(FLAGS.seed)
+
+    if FLAGS.datatype == "setpp":
+        train  = SetDataset("data/setpp/", split="train")
+        test   = SetDataset("data/setpp/", split="test", transform=train.transform, vocab=train.vocab)
+    elif FLAGS.datatype == "shapes":
+        train  = ShapeDataset("data/shapes/",split="train")
+        test   = ShapeDataset("data/shapes/",split="test", transform=train.transform, vocab=train.vocab)
+    elif FLAGS.datatype == "clevr":
+        train  = CLEVRDataset("data/clevr/", split="trainA")
+        test   = CLEVRDataset("data/clevr/", split="valB", transform=train.transform, vocab=train.vocab)
     else:
-        train_vae()
+        train  = SCANDataset("data/scan/",split="train")
+        test   = SCANDataset("data/scan/",split="test", transform=train.transform, vocab=train.vocab)
+
+    vis_folder = flags_to_path()
+    os.makedirs(vis_folder,exist_ok = True)
+    print("vis folder:", vis_folder)
+
+    if FLAGS.modeltype == "VQVAE":
+        model = VectorQuantizedVAE(3, FLAGS.h_dim,
+                                     FLAGS.n_latent,
+                                     n_codes=FLAGS.n_codes,
+                                     cc=FLAGS.commitment_cost,
+                                     decay=FLAGS.decay,
+                                     epsilon=FLAGS.epsilon,
+                                     beta=FLAGS.beta,
+                                     cmdproc=False,
+                                     size=train.size,
+                                   ).to(device)
+        model.load_state_dict(torch.load(FLAGS.vae_path).state_dict())
+        model.eval()
+    else:
+        error("Not available for imgcode")
+
+    train_loader = DataLoader(train, batch_size=FLAGS.n_batch, shuffle=False, collate_fn=train.collate, num_workers=4)
+    test_loader = DataLoader(test, batch_size=FLAGS.n_batch, shuffle=False, collate_fn=train.collate,  num_workers=4)
+    for (split,loader) in zip(("train","test"),(train_loader,test_loader)):
+        generator = iter(loader)
+        with open(os.path.join(vis_folder, f"{split}_encodings.txt"), "w") as f:
+            for i in range(len(generator)):
+                try:
+                    cmd, img, names = next(generator)
+                except StopIteration:
+                    generator = iter(loader)
+                    cmd, img, names = next(generator)
+
+                img = img.to(device)
+                cmd = cmd.to(device)
+                _, _, recon_error, _, _, encodings = model(img, cmd)
+                for k in range(img.shape[0]):
+                    encc  = encodings[k].flatten().detach().cpu().numpy()
+                    encc  = [str(e) for e in encc]
+                    cmdc  = train.vocab.decode_plus(cmd[:,k].detach().cpu().numpy())
+                    line = " ".join(cmdc) + "\t" + " ".join(encc) + "\t" + names[k] + "\n"
+                    f.write(line)
+
+def main(argv):
+    if FLAGS.extract_codes:
+        img2code()
+    else:
+        if FLAGS.modeltype.startswith("C"):
+            train_cvae()
+        else:
+            train_vae()
 
 if __name__ == "__main__":
     app.run(main)

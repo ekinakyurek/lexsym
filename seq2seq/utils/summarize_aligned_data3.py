@@ -2,9 +2,9 @@ import sys
 from collections import Counter
 import pdb
 import pickle, json
-EPS=3 #3
-SPLIT_TOK=" ||| "
-#SPLIT_TOK="\t"
+EPS=4 #3
+#SPLIT_TOK=" ||| "
+SPLIT_TOK="\t"
 def main(data_file, aligner_file):
     data = None
     with open(data_file, "r") as f:
@@ -15,7 +15,7 @@ def main(data_file, aligner_file):
     outputs = []
     #with open(aligner_file, "r") as f:
     for k, line in enumerate(data):
-        input, output = line.split(SPLIT_TOK)
+        input, output, _ = line.split(SPLIT_TOK)
         input, output = set(input.strip().split(" ")), set(output.strip().split(" "))
         inputs.append(input)
         outputs.append(output)
@@ -67,7 +67,7 @@ def main(data_file, aligner_file):
             for k, line in enumerate(data):
                 if len(candidates) == 0:
                     break
-                input, output = line.split(SPLIT_TOK)
+                input, output, _ = line.split(SPLIT_TOK)
                 input, output = set(input.strip().split(" ")), set(output.strip().split(" "))
                 if v in output:
                     for e in set(candidates):

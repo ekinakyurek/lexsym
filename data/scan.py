@@ -8,7 +8,7 @@ from torch.nn.utils.rnn import pad_sequence
 import torchvision.transforms as transforms
 from PIL import Image
 import math, re
-import pdb
+#import pdb
 
 def get_digits(n, b, k=4):
      if n == 0:
@@ -110,10 +110,10 @@ class SCANDataset(object):
 
     def __getitem__(self, i):
         annotation = self.annotations[i]
-        image = annotation["image"]
+        file = annotation["image"]
         desc = annotation["text"]
-        image = self.transform(Image.open(os.path.join(self.root,  image)).convert(self.color))
-        return desc.split(), image
+        image = self.transform(Image.open(os.path.join(self.root,file)).convert(self.color))
+        return desc.split(), image, file
 
     def __len__(self):
         return len(self.annotations)
@@ -122,12 +122,11 @@ class SCANDataset(object):
         return self.vocab.decode(cmd)
 
     def collate(self, batch):
-        cmds, imgs = zip(*batch)
+        cmds, imgs, files = zip(*batch)
         #enc_cmds = [torch.tensor([self.vocab[w] for w in cmd]) for cmd in cmds]
         enc_cmds = [torch.tensor(self.vocab.encode(cmd)) for cmd in cmds]
         pad_cmds = pad_sequence(enc_cmds, padding_value=vocab.pad())
-        return pad_cmds, torch.stack(imgs, dim=0)
-
+        return pad_cmds, torch.stack(imgs, dim=0), files 
 
 
 if __name__=="__main__":

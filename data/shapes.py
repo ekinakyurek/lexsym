@@ -7,7 +7,7 @@ import random
 from torch.nn.utils.rnn import pad_sequence
 import torchvision.transforms as transforms
 from PIL import Image
-import pdb
+#import pdb
 from seq2seq import Vocab
 
 class ShapeDataset(object):
@@ -59,10 +59,10 @@ class ShapeDataset(object):
 
     def __getitem__(self, i):
         annotation = self.annotations[i]
-        image = annotation["image"]
+        file = annotation["image"]
         desc = annotation["description"]
-        image = self.transform(Image.open(os.path.join(self.root, image)).convert(self.color))
-        return desc.split(), image
+        image = self.transform(Image.open(os.path.join(self.root, file)).convert(self.color))
+        return desc.split(), image, files
 
     def __len__(self):
         return len(self.annotations)
@@ -71,7 +71,7 @@ class ShapeDataset(object):
         return self.vocab.decode(cmd)
 
     def collate(self, batch):
-        cmds, imgs = zip(*batch)
+        cmds, imgs, files = zip(*batch)
         enc_cmds = [torch.tensor([self.vocab[w] for w in cmd]) for cmd in cmds]
         pad_cmds = pad_sequence(enc_cmds, padding_value=self.vocab.pad())
-        return pad_cmds, torch.stack(imgs, dim=0)
+        return pad_cmds, torch.stack(imgs, dim=0), files
