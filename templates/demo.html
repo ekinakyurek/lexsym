@@ -28,13 +28,18 @@
       width: 100%;
       height: 100%; /* added */
       display: grid;
-      grid-gap: 0.1em;
-      grid-template-rows: repeat(var(--grid-rows), 1fr);
+      grid-gap: 0.0em;
+      grid-template-rows: repeat(var(--grid-rows), minmax(32px , 1fr));
       grid-template-columns: repeat(var(--grid-cols),minmax(10px , 1fr));
+      opacity: 0.2;
     }
 
     #formblock{
-      width: 60%;
+      width: 512px;
+      position: absolute;
+      left: 0px;
+      top: 0px;
+      height: 512px;
     }
 
     .grid-item {
@@ -44,8 +49,17 @@
     }
 
     #myimg {
-      width:256px;
-      height:256px;
+      position: absolute;
+      left: 0px;
+      top: 0px;
+      width:512px;
+      height:512px;
+    }
+
+    #codeblock{
+      position: absolute;
+      left: 0;
+      top: 600px;
     }
     </style>
     <script type="text/javascript">
@@ -66,9 +80,10 @@
           // cell.setAttribute("onkeyup","this.value = minmax(this.value, 0, 31);");
           container.appendChild(cell).className = "grid-item";
         };
-        const lex = document.createElement("CODE");
-        lex.setAttribute("id","lexicon");
-        document.body.appendChild(lex);
+        // const codeinner = document.getElementById("lexicon");
+        // const lex = document.createElement("CODE");
+        // lex.setAttribute("id","lexicon");
+        // document.body.appendChild(lex);
       };
 
     function set_encoding(encoding){
@@ -128,6 +143,16 @@
                return max;
            else return value;
        }
+       function toggleform(){
+         el = $('#container')
+         if (el.css('opacity') == 0.0){
+           $('#container').css("opacity", 0.2);
+         }else{
+           $('#container').css("opacity", 0.0);
+         };
+
+       };
+
       window.onload = function() {
           makeRows(grid_size, grid_size);
       };
@@ -145,9 +170,13 @@
         <button type="button" onclick="get_next()"> Next </button>
         <!-- <button type="button" onclick="decode()"> Decode </button> -->
       </form>
+      <button type="button" onclick="toggleform()"> toggleform</button>
     </div>
 
-
+    <div id="codeblock">
+      <code id="lexicon">
+      </code>
+    </div>
 
 
 </body>

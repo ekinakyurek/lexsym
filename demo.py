@@ -101,7 +101,7 @@ import sys
 if __name__=="__main__":
     flags.FLAGS(sys.argv)
     model, train, test, vis_folder, matchings = init_fn(sys.argv)
-    test_loader = DataLoader(test, batch_size=1, shuffle=False, collate_fn=train.collate)
+    test_loader = DataLoader(train, batch_size=1, shuffle=False, collate_fn=train.collate)
     generator = iter(test_loader)
     T = torchvision.transforms.ToPILImage(mode=train.color)
     app.config['VIS_FOLDER']  = vis_folder
