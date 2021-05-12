@@ -7,7 +7,7 @@
 #SBATCH --qos=high
 #SBATCH --constrain=xeon-g6
 #SBATCH --gres=gpu:volta:1
-#SBATCH --array=1-8
+#SBATCH --array=1-12
 
 
 n_batch=128
@@ -16,21 +16,20 @@ seed=0
 modeltype=CVQVAE
 datatype=clevr
 beta=1.0
-n_iter=75000
+n_iter=30000
 i=0
 
 ulimit -n 10000
 ulimit -x unlimited
 
-for n_latent in 8 16 32 64; do
-    for n_codes in 32; do
+for n_latent in 64; do
+    for n_codes in 24 32; do
 	     for lr in 0.0003; do
           i=$((i + 1));
           if [[ $i -eq $SLURM_ARRAY_TASK_ID ]]; then
             exp_folder="vis/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/logs/"
             vae_path="vis/${datatype}/VQVAE/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/model.pt"
-	    lex_path="vis/${datatype}/VQVAE/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/diag.align.json"
-
+	           lex_path="vis/${datatype}/VQVAE/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/forward.align.json"
             mkdir -p $exp_folder
             PYTHONHASHSEED=${seed} python -u main.py \
                                 --seed ${seed} \

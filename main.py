@@ -379,7 +379,7 @@ def train_cvae():
             train_loss += loss * img.shape[0]
             cnt += img.shape[0]
 
-            if i==10 or (i+1) % 1000 == 0:
+            if i==10 or (i+1) % 100 == 0:
                 model.eval()
                 with torch.no_grad():
                     print('%d iterations' % (i+1))
@@ -393,17 +393,17 @@ def train_cvae():
                         cmd, img, _  = next(test_iter)
                         cmd = cmd.to(device)
                         img = img.to(device)
-                        recon, pred_encodings = model.predict(cmd, sample=True, top_k=10)
-                        pred_encodings =model.make_number_grid(pred_encodings.cpu())
+                        recon, pred_encodings, copy_probs = model.predict(cmd, sample=True, top_k=10)
+                        pred_encodings = model.make_number_grid(pred_encodings.cpu())
+                        copy_heatmap   = model.make_copy_grid(pred_encodings.cpu())
                         _, encodings, *_ = model.vqvae.encode(img)
                         encodings = model.make_number_grid(encodings.cpu())
-                        encodings = torch.cat((pred_encodings,encodings),0)
+                        encodings = torch.cat((copy_heatmap, pred_encodings, encodings),0)
                         recon = recon.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
                         img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
                         res   = torch.cat((recon,img),0).clip_(0,1)
-                        T(make_grid(encodings, nrow=encodings.shape[0]//2)).convert("RGB").save(os.path.join(vis_folder,f"{i}_{j}_encodings.png"))
+                        T(make_grid(encodings, nrow=encodings.shape[0]//3)).convert("RGB").save(os.path.join(vis_folder,f"{i}_{j}_encodings.png"))
                         T(make_grid(res, nrow=res.shape[0]//2)).convert("RGB").save(os.path.join(vis_folder,f"{i}_{j}.png"))
-
                         print("saved")
                 model.train()
                 model.vqvae.eval()
@@ -421,7 +421,7 @@ def train_cvae():
             cmd = cmd.to(device)
             img = img.to(device)
             print("sampling")
-            recon = model.predict(cmd, top_k=10, sample=True)
+            recon, *_ = model.predict(cmd, top_k=10, sample=True)
             print("sampled")
             recon = recon.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
             img   = img.cpu().data * train.std[None,:,None,None] + train.mean[None,:,None,None]
@@ -455,7 +455,7 @@ def evaluate_cvae(model,loader):
         cmd = cmd.to(device)
         cnt += img.shape[0]
         loss  = model(img, cmd)
-        x_tilde, _ = model.predict(cmd)
+        x_tilde, *_ = model.predict(cmd)
         val_recon_error += (x_tilde-img).pow(2).sum().item()
         val_loss += loss.item() * img.shape[0]
         if cnt > 100:

@@ -9,7 +9,7 @@ import torchvision.transforms as transforms
 from PIL import Image
 from seq2seq import Vocab
 import math
-#import pdb
+import pdb
 
 class CLEVRDataset(object):
     def __init__(self, root="data/clevr/", split="trainA", transform=None, vocab=None, color="RGB", size=(128,128)):
@@ -41,6 +41,9 @@ class CLEVRDataset(object):
                 for tok in desc.split():
                     self.vocab.add(tok)
 
+        pdb.set_trace()
+        self.annotations = list(filter(lambda a: len(a['objects'])<2, self.annotations))
+
         random.shuffle(self.annotations)
         print(f"{split}: {len(self.annotations)}")
 
@@ -49,7 +52,7 @@ class CLEVRDataset(object):
                                     transforms.Resize(int(math.ceil(self.size[0]*1.1))),
                                     transforms.CenterCrop(self.size)])
             running_mean = torch.zeros(3, dtype=torch.float32)
-            N  = 250
+            N  = min(250,len(self.annotations))
             for i in range(N):
                 with Image.open(self.annotations[i]["image"]) as image:
                     img = T(image.convert(self.color))
