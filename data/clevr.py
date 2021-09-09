@@ -41,9 +41,9 @@ class CLEVRDataset(object):
                 for tok in desc.split():
                     self.vocab.add(tok)
 
-        pdb.set_trace()
-        self.annotations = list(filter(lambda a: len(a['objects'])<2, self.annotations))
 
+        # self.annotations = [a for a in self.annotations if len(a['objects'])<=3]
+        # pdb.set_trace()
         random.shuffle(self.annotations)
         print(f"{split}: {len(self.annotations)}")
 

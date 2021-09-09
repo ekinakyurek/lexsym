@@ -395,7 +395,7 @@ def train_cvae():
                         img = img.to(device)
                         recon, pred_encodings, copy_probs = model.predict(cmd, sample=True, top_k=10)
                         pred_encodings = model.make_number_grid(pred_encodings.cpu())
-                        copy_heatmap   = model.make_copy_grid(pred_encodings.cpu())
+                        copy_heatmap   = model.make_copy_grid(copy_probs.cpu())
                         _, encodings, *_ = model.vqvae.encode(img)
                         encodings = model.make_number_grid(encodings.cpu())
                         encodings = torch.cat((copy_heatmap, pred_encodings, encodings),0)

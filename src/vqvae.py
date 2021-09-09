@@ -11,7 +11,7 @@ import operator
 import matplotlib.pyplot as plt
 import matplotlib.ticker as plticker
 import torchvision.transforms.functional as TF
-import pdb
+# import pdb
 EPS = 1e-7
 
 class VectorQuantizedVAE(nn.Module):
@@ -260,7 +260,7 @@ class CVQVAE(nn.Module):
             ki = src_keys.index(k)
             for (v,c) in matching.items():
                 vi = int(v)
-                lexicon[ki,vi] = c / 10.0
+                lexicon[ki,vi] = 10000
         lexicon = torch.from_numpy(lexicon).float()
         # pdb.set_trace()
         return torch.softmax(lexicon, dim=1)
@@ -332,7 +332,7 @@ class CVQVAE(nn.Module):
         # seq_weights = F.softmax(seq_logits,dim=-1).unsqueeze(2) + EPS # L x B x 2 -> L x B x 1 x 2
         output = enc_T.flatten()
         src_copy_probs = src_translate_prob.contiguous().view(-1,src_translate_prob.size(-1))
-        must_copied = src_copy_probs[range(src_copy_probs.size(0)), output] > 0.1 # 0.3must_
+        must_copied = src_copy_probs[range(src_copy_probs.size(0)), output] > 0.05 # 0.3must_
         loss1 = self.copy_criterion(seq_logits.flatten(),must_copied.float())
         ###
             # scores: prob_logits, prob_copy_logits, prob_self_copy_logits
@@ -468,6 +468,7 @@ class CVQVAE(nn.Module):
         plt.cla()
         plt.close(fig)
         return figtensor
+
     def make_copy_grid(self, encodings):
         B = encodings.shape[0]
         return torch.stack([self.copy_heatmap(encodings[i]) for i in range(B)],dim=0)
