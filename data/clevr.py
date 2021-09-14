@@ -9,11 +9,11 @@ import torchvision.transforms as transforms
 from PIL import Image
 from seq2seq import Vocab
 import math
-import pdb
+
 
 class CLEVRDataset(object):
     def __init__(self, root="data/clevr/", split="trainA", transform=None, vocab=None, color="RGB", size=(128,128)):
-        self.root  = root
+        self.root = root
         self.split = split
         self.color = color
         self.size = size
@@ -35,7 +35,7 @@ class CLEVRDataset(object):
             desc = desc[:-1]
             # if "answer" in annotation:
             #     desc = desc + " " + annotation["answer"]
-            annotation["desc"]  = desc
+            annotation["desc"] = desc
             annotation["image"] = os.path.join(root, "images", split, annotation["image_filename"])
             if vocab is None:
                 for tok in desc.split():
@@ -52,18 +52,18 @@ class CLEVRDataset(object):
                                     transforms.Resize(int(math.ceil(self.size[0]*1.1))),
                                     transforms.CenterCrop(self.size)])
             running_mean = torch.zeros(3, dtype=torch.float32)
-            N  = min(250,len(self.annotations))
+            N = min(250, len(self.annotations))
             for i in range(N):
                 with Image.open(self.annotations[i]["image"]) as image:
                     img = T(image.convert(self.color))
-                    running_mean += img.mean(dim=(1,2))
+                    running_mean += img.mean(dim=(1, 2))
             self.mean = running_mean / N
 
             running_var = torch.zeros(3, dtype=torch.float32)
             for i in range(N):
                 with Image.open(self.annotations[i]["image"]) as image:
                     img = T(image.convert(self.color))
-                    running_var += ((img - self.mean[:,None,None]) ** 2).mean(dim=(1,2))
+                    running_var += ((img - self.mean[:, None, None]) ** 2).mean(dim=(1, 2))
             var = running_var / N
             self.std = torch.sqrt(var)
 
@@ -72,13 +72,12 @@ class CLEVRDataset(object):
                                                 transforms.CenterCrop(self.size),
                                                 transforms.Normalize(self.mean, self.std)])
         else:
-            self.transform  = transform
-
+            self.transform = transform
 
     def __getitem__(self, i):
         annotation = self.annotations[i]
         desc = annotation["desc"].split(" ")
-        file =  annotation["image"]
+        file = annotation["image"]
         with Image.open(file) as image:
             img = self.transform(image.convert(self.color))
         return desc, img, file
