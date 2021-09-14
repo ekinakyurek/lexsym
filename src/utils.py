@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as plticker
 import torchvision.transforms.functional as TF
 
+
 def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
@@ -96,15 +97,15 @@ def number_matrix(encoding, size=(512,512)):
     h, w = encoding.shape
     encoding = encoding.numpy()
     # Set up figure
-    my_dpi=300
-    fig=plt.figure(figsize=(size[0] / my_dpi, size[1] / my_dpi),dpi=my_dpi)
-    ax=fig.add_subplot(111)
+    my_dpi = 300
+    fig = plt.figure(figsize=(size[0] / my_dpi, size[1] / my_dpi),dpi=my_dpi)
+    ax = fig.add_subplot(111)
 
     # Remove whitespace from around the image
     fig.subplots_adjust(left=0,right=1,bottom=0,top=1)
 
     # Set the gridding interval: here we use the major tick interval
-    myInterval= 1.0 / h
+    myInterval = 1.0 / h
     loc = plticker.MultipleLocator(base=myInterval)
     ax.xaxis.set_major_locator(loc)
     ax.yaxis.set_major_locator(loc)
@@ -113,18 +114,18 @@ def number_matrix(encoding, size=(512,512)):
     ax.grid(which='major', axis='both', linestyle='-', linewidth=0.2)
 
     # Find number of gridsquares in x and y direction
-    nx=h
-    ny=w
+    nx = h
+    ny = w
 
     # Add some labels to the gridsquares
     for j in range(ny):
         y = myInterval/2 + j*myInterval
         for i in range(nx):
             x = myInterval/2. + i*myInterval
-            ax.text(x,y,str(encoding[j,i]),ha='center',va='center', fontsize=4.5)
+            ax.text(x, y, str(encoding[j,i]),ha='center',va='center', fontsize=4.5)
 
     # Save the figure
-    figtensor =  fig2tensor(fig)
+    figtensor = fig2tensor(fig)
     plt.cla()
     plt.close(fig)
     return figtensor

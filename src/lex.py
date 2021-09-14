@@ -3,6 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 import math
 
+
 def positionalencoding2d(d_model, height, width):
     """
     :param d_model: dimension of the model
@@ -59,7 +60,7 @@ class ImageFilter(nn.Module):
             downsample_block = []
             downsample_block.append(nn.ReplicationPad2d(1))
             downsample_block.append(nn.Conv2d(in_size, out_size, 3, 2))
-            #downsample_block.append(nn.BatchNorm2d(out_size, 1e-3))
+            # downsample_block.append(nn.BatchNorm2d(out_size, 1e-3))
             downsample_block.append(nn.LeakyReLU(0.2))
             downsample_block.append(Positional())
             downsample_layers.append(nn.Sequential(*downsample_block))
@@ -77,10 +78,10 @@ class ImageFilter(nn.Module):
             upsample_block.append(nn.UpsamplingNearest2d(scale_factor=2))
             upsample_block.append(nn.ReplicationPad2d(1))
             upsample_block.append(nn.Conv2d(in_size, out_size, 3, 1))
-            #upsample_block.append(nn.BatchNorm2d(out_size, 1e-3))
+            # upsample_block.append(nn.BatchNorm2d(out_size, 1e-3))
             # TODO last should be sigmoid?
             if i == n_downsample - 1:
-                #upsample_block.append(nn.Sigmoid())
+                # upsample_block.append(nn.Sigmoid())
                 pass
             else:
                 upsample_block.append(nn.LeakyReLU(0.2))

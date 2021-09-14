@@ -7,8 +7,8 @@ import random
 from torch.nn.utils.rnn import pad_sequence
 import torchvision.transforms as transforms
 from PIL import Image
-#import pdb
 from seq2seq import Vocab
+
 
 class ShapeDataset(object):
     def __init__(self, root="data/shapes/", split="train", transform=None, vocab=None, color="RGB", size=(64,64)):
@@ -19,7 +19,7 @@ class ShapeDataset(object):
         with open(self.root + "data.json") as reader:
             self.annotations = json.load(reader)
         with open(self.root+"splits.json") as reader:
-             self.annotations = [self.annotations[i] for i in json.load(reader)[self.split]]
+            self.annotations = [self.annotations[i] for i in json.load(reader)[self.split]]
 
         if vocab is None:
             self.vocab = Vocab()
@@ -41,14 +41,14 @@ class ShapeDataset(object):
             for i in range(len(self.annotations)):
                 img = T(Image.open(os.path.join(self.root,
                            self.annotations[i]["image"])).convert(self.color))
-                running_mean += img.mean(dim=(1,2))
+                running_mean += img.mean(dim=(1, 2))
             self.mean = running_mean / len(self.annotations)
 
             running_var = torch.zeros(3, dtype=torch.float32)
             for i in range(100):
                 img = T(Image.open(os.path.join(self.root,
                             self.annotations[i]["image"])).convert(self.color))
-                running_var += ((img - self.mean[:,None,None]) ** 2).mean(dim=(1,2))
+                running_var += ((img - self.mean[:, None, None]) ** 2).mean(dim=(1, 2))
             var = running_var / len(self.annotations)
             self.std = np.sqrt(var)
 
@@ -62,7 +62,7 @@ class ShapeDataset(object):
         file = annotation["image"]
         desc = annotation["description"]
         image = self.transform(Image.open(os.path.join(self.root, file)).convert(self.color))
-        return desc.split(), image, files
+        return desc.split(), image, file
 
     def __len__(self):
         return len(self.annotations)

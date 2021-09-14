@@ -13,11 +13,11 @@ class DAE(nn.Module):
         self.decdims = [*decdims, input_dim]
 
         self.down_blocks = []
-        for in_layer,out_layer in zip(self.encdims,self.encdims[1:]):
+        for in_layer, out_layer in zip(self.encdims,self.encdims[1:]):
             self.down_blocks.append(nn.Conv2d(in_layer,out_layer,4,stride=2,padding=1))
             self.down_blocks.append(nn.ELU())
 
-        self.encoder=nn.Sequential(*self.down_blocks)
+        self.encoder = nn.Sequential(*self.down_blocks)
 
         with torch.no_grad():
             mu = self.encoder(torch.ones(1,3,*size))
@@ -31,13 +31,13 @@ class DAE(nn.Module):
         self.up_blocks = []
 
         for in_layer,out_layer in zip(self.decdims,self.decdims[1:]):
-            self.up_blocks.append(nn.ConvTranspose2d(in_layer,out_layer,4,stride=2,padding=1))
+            self.up_blocks.append(nn.ConvTranspose2d(in_layer, out_layer, 4, stride=2, padding=1))
             self.up_blocks.append(nn.ELU())
 
         self.up_blocks.pop()
 
         self.decoder=nn.Sequential(
-                        nn.Linear(latentdim,self.pre_shape[1] * self.pre_shape[2] * self.decdims[0]),
+                        nn.Linear(latentdim, self.pre_shape[1] * self.pre_shape[2] * self.decdims[0]),
                         View(-1, self.decdims[0], self.pre_shape[1], self.pre_shape[2]),
                         *self.up_blocks,
                         )
@@ -45,6 +45,6 @@ class DAE(nn.Module):
     def forward(self,blocked_image):
         encoded = self.encoder(blocked_image)
         z = self.proj(encoded)
-        decoded=self.decoder(z)
+        decoded = self.decoder(z)
         loss = F.mse_loss(decoded, blocked_image)
         return loss, decoded, loss, None

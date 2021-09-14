@@ -57,9 +57,19 @@
     }
 
     #codeblock{
-      position: absolute;
       left: 0;
       top: 600px;
+    }
+
+    .float-container {
+      border: 3px solid #fff;
+      padding: 20px;
+    }
+
+    .float-child {
+      width: 50%;
+      float: left;
+      padding: 20px;
     }
     </style>
     <script type="text/javascript">
@@ -101,8 +111,17 @@
                      result = JSON.parse(data);
                      document.getElementById("myimg").src =  'data:image/jpeg;base64,' + result['img']
                      set_encoding(result['encodings'])
-                     const lexicon = document.getElementById("lexicon");
-                     lexicon.innerHTML = JSON.stringify(result['matchings'])
+                     if ($("#excelDataTable tr").length == 0){
+                         myList = []
+                         lexicon = result['matchings']
+                         for (var key in lexicon) {
+                            alignments = lexicon[key];
+                            keys = Object.keys(alignments).join(", ");
+                            values = Object.values(alignments).join(", ");
+                            myList.push({'word': key, 'alignments': keys, 'scores': values});
+                         };
+                         buildHtmlTable(myList, '#excelDataTable');
+                     }
                   }
           });
       };
@@ -153,13 +172,50 @@
 
        };
 
+       // Builds the HTML Table out of myList.
+       function buildHtmlTable(myList, selector) {
+         var columns = addAllColumnHeaders(myList, selector);
+
+         for (var i = 0; i < myList.length; i++) {
+           var row$ = $('<tr/>');
+           for (var colIndex = 0; colIndex < columns.length; colIndex++) {
+             var cellValue = myList[i][columns[colIndex]];
+             if (cellValue == null) cellValue = "";
+             row$.append($('<td/>').html(cellValue));
+           }
+           $(selector).append(row$);
+         }
+       }
+
+       // Adds a header row to the table and returns the set of columns.
+       // Need to do union of keys from all records as some records may not contain
+       // all records.
+       function addAllColumnHeaders(myList, selector) {
+         var columnSet = [];
+         var headerTr$ = $('<tr/>');
+
+         for (var i = 0; i < myList.length; i++) {
+           var rowHash = myList[i];
+           for (var key in rowHash) {
+             if ($.inArray(key, columnSet) == -1) {
+               columnSet.push(key);
+               headerTr$.append($('<th/>').html(key));
+             }
+           }
+         }
+         $(selector).append(headerTr$);
+
+         return columnSet;
+       }
+
       window.onload = function() {
           makeRows(grid_size, grid_size);
       };
     </script>
 </head>
 <body>
-
+<div class="float-container">
+  <div class="float-child">
     <img id="myimg" src="" alt="reconstruction"></img>
 
     <div id="formblock">
@@ -172,11 +228,17 @@
       </form>
       <button type="button" onclick="toggleform()"> toggleform</button>
     </div>
+  </div>
 
+<div class="float-child">
     <div id="codeblock">
-      <code id="lexicon">
-      </code>
+      <!-- <code id="lexicon">
+      </code> -->
+      <table id="excelDataTable" border="1"> </table>
     </div>
+</div>
+
+</div>
 
 
 </body>
