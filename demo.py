@@ -4,7 +4,8 @@ import torchvision
 from torchvision.utils import make_grid, save_image
 from absl import app, flags
 FLAGS = flags.FLAGS
-from main import set_seed, flags_to_path, device
+from main import flags_to_path, device
+from src.utils import set_seed
 from main import VectorQuantizedVAE, CLEVRDataset, SetDataset, ShapeDataset, SCANDataset
 from flask import Flask, render_template, request, jsonify
 from absl import app as fapp

@@ -8,12 +8,15 @@ from torch import optim
 from torch.utils import data as torch_data
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
 from src.lex import FilterModel
 from src.vqvae import VectorQuantizedVAE, CVQVAE
 from src.vae import VAE, CVAE
 from src.dae import DAE
+from src import utils
 # from src.utils import make_number_grid
 
 from data.shapes import ShapeDataset
@@ -24,12 +27,13 @@ import torchvision
 from torchvision.utils import make_grid, save_image
 import itertools
 import functools
+import warnings
 from absl import app, flags, logging
-
-FLAGS = flags.FLAGS
+import pdb
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-logging.info(f"DEVICE: {device}")
+
+FLAGS = flags.FLAGS
 
 flags.DEFINE_integer("h_dim", 32, "")
 flags.DEFINE_integer("rnn_dim", 256, "")
@@ -40,6 +44,7 @@ flags.DEFINE_integer("n_batch", 128, "")
 flags.DEFINE_integer("n_iter", 100000, "")
 flags.DEFINE_integer("n_epoch", 50, "")
 flags.DEFINE_integer("n_codes", 10, "")
+flags.DEFINE_integer("n_workers", 4, "")
 flags.DEFINE_integer("seed", 0, "")
 flags.DEFINE_float("beta", 1.0, "")
 flags.DEFINE_float("commitment_cost", 0.25, "")
@@ -61,97 +66,140 @@ flags.DEFINE_bool("filter_model", False, "")
 flags.DEFINE_bool("test", False, "")
 
 
-def train_lexgen():
-    if FLAGS.datatype == "setpp":
-        train = SetDataset("data/setpp/", split="train")
-        test = SetDataset("data/setpp/",
-                          split="test",
-                          transform=train.transform,
-                          vocab=train.vocab)
-    else:
-        train = ShapeDataset(root="data/shapes/", split="train")
-        test = ShapeDataset(root="data/shapes/",
-                            split="test",
-                            transform=train.transform,
-                            vocab=train.vocab)
+flags.DEFINE_bool("distributed", False, "")
 
-    vis_folder = os.path.join("vis", FLAGS.datatype, "FilterModel")
-    os.makedirs(vis_folder, exist_ok=True)
-    logging.info("vis folder: %s", vis_folder)
+flags.DEFINE_integer('gpu', default=None,
+                     help='GPU id to use.')
+
+flags.DEFINE_integer('rank', default=0,
+                     help='node rank for distributed training')
+
+flags.DEFINE_integer('world_size', default=1,
+                     help='ngpus')
+
+flags.DEFINE_string('dist_backend', default='nccl',
+                    help='distributed backend')
+
+flags.DEFINE_string('dist_url', default='tcp://127.0.0.1:23456',
+                    help='url used to set up distributed training')
+
+flags.DEFINE_bool('multiprocessing_distributed', False,
+                  help='Use multi-processing distributed training to launch '
+                       'N processes per node, which has N GPUs. This is the '
+                       'fastest way to use PyTorch for either single node or'
+                       ' multi node data parallel training')
+
+
+def train_filter_model(model,
+                       train,
+                       test,
+                       optimizer,
+                       vis_folder,
+                       n_batch=64,
+                       epoch=1,
+                       n_workers=1,
+                       distributed=False,
+                       ngpus_per_node=1,
+                       gpu=0,
+                       rank=0):
+
+    main_worker = rank % ngpus_per_node == 0
+
+    if distributed:
+        train_sampler = DistributedSampler(train)
+    else:
+        train_sampler = None
+
+    worker_init_fn = functools.partial(utils.worker_init_fn, rank=rank)
 
     loader = DataLoader(train,
-                        batch_size=FLAGS.n_batch,
-                        shuffle=True,
-                        collate_fn=train.collate)
+                        batch_size=n_batch,
+                        shuffle=(train_sampler is None),
+                        pin_memory=True,
+                        collate_fn=train.collate,
+                        sampler=train_sampler,
+                        num_workers=n_workers,
+                        worker_init_fn=worker_init_fn)
 
-    test_loader = DataLoader(test, batch_size=32, collate_fn=train.collate)
-
-    model = FilterModel(
-        vocab=train.vocab,
-        n_downsample=2,
-        n_latent=FLAGS.n_latent,
-        n_steps=10
-    ).cuda()
-
-    optimizer = optim.Adam(model.parameters(), lr=FLAGS.lr)
-
-    for i in range(FLAGS.n_epoch):
-        for j, (cmd, img, _) in enumerate(loader):
-            loss, *_ = model(cmd.to(device), img.to(device))
+    for i in range(epoch):
+        if train_sampler:
+            train_sampler.set_epoch(i)
+        total_loss = .0
+        total_item = .0
+        tloader = tqdm(loader) if main_worker else loader
+        model.train()
+        for (cmd, img, _) in tloader:
+            cmd = cmd.transpose(0, 1)
+            if gpu is not None:
+                cmd = cmd.cuda(gpu, non_blocking=True)
+                img = img.cuda(gpu, non_blocking=True)
+            loss = model(cmd, img, test=False)
             optimizer.zero_grad()
-            loss.backward()
+            loss.mean().backward()
             optimizer.step()
-        logging.info("Loss %.4f", loss.item())
-        if i % 5 == 0:
-            visualizations = []
-            itloader = iter(loader)
-            for j in range(3):
-                cmd, img, _ = next(itloader)
-                loss, _, results, attentions, text_attentions = model(
-                                                                cmd.to(device),
-                                                                img.to(device))
-                visualizations.append(visualize(
-                    train,
-                    f"train-{i}-{j}",
-                    train.decode(cmd[:, 0].detach().cpu().numpy()),
-                    results,
-                    attentions,
-                    text_attentions,
-                    vis_folder,
-                ))
+            total_loss += loss.mean().item()
+            total_item += img.shape[0]
+            if main_worker:
+                tloader.set_description(
+                 f"Epoch {i}, Avg Loss (Train): %.4f, N: %d" %
+                 (total_loss/total_item, total_item))
+        if main_worker:
+            logging.info(f"Epoch {i} (Train): %.4f", total_loss / total_item)
+            model.eval()
+            train_vis = visualize_filter_preds(model,
+                                               train,
+                                               vis_folder,
+                                               gpu=gpu,
+                                               n_workers=n_workers,
+                                               it=i)
 
-            # logging.info("\n-----------------\n")
-            itloader = iter(test_loader)
-            for j in range(3):
-                cmd, img, _ = next(itloader)
-                loss, _, results, attentions, text_attentions = model(
-                                                                cmd.to(device),
-                                                                img.to(device))
-                visualizations.append(visualize(
-                    train,
-                    f"test-{i}-{j}",
-                    test.decode(cmd[:, 0].detach().cpu().numpy()),
-                    results,
-                    attentions,
-                    text_attentions,
-                    vis_folder,
-                ))
+            test_vis = visualize_filter_preds(model,
+                                              test,
+                                              vis_folder,
+                                              gpu=gpu,
+                                              n_workers=n_workers,
+                                              it=i)
 
-            render_html(visualizations, vis_folder)
+            render_html(train_vis+test_vis, vis_folder)
 
 
-def prep(img, *, mean=[0.], std=[0.], transform=None):
-    img = img[0, ...].cpu().detach()
-    if img.shape[0] == 3:
-        img = img * std[:, None, None] + mean[:, None, None]
-        img = torch.clip(img, 0, 1)
-    if transform is not None:
-        img = transform(img)
-    else:
-        img = (img.numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
-        if img.shape[2] == 1:
-            img = img[:, :, 0]
-    return img
+def visualize_filter_preds(model,
+                           test,
+                           vis_folder,
+                           gpu=0,
+                           n_workers=1,
+                           it=0,
+                           n=3):
+
+    test_loader = DataLoader(test,
+                             batch_size=5,
+                             shuffle=False,
+                             pin_memory=True,
+                             collate_fn=test.collate,
+                             num_workers=n_workers,
+                             worker_init_fn=utils.worker_init_fn)
+
+    visualizations = []
+    cmd, img, _ = next(iter(test_loader))
+    cmd = cmd.transpose(0, 1)
+    if gpu is not None:
+        cmd = cmd.cuda(gpu, non_blocking=True)
+        img = img.cuda(gpu, non_blocking=True)
+    _, *extras = model(**dict(cmd=cmd, img=img, test=True))
+    _, results, attentions, text_attentions = map(utils.cpu, extras)
+    cmd = utils.cpu(cmd).numpy()
+    img = utils.cpu(img).numpy()
+    for j in range(n):
+        visualizations.append(visualize(
+            test,
+            f"train-{it}-{j}",
+            test.decode(cmd[j, :]),
+            results,
+            attentions,
+            text_attentions,
+            vis_folder
+        ))
+    return visualizations
 
 
 def visualize(dataset,
@@ -162,14 +210,26 @@ def visualize(dataset,
               text_attentions,
               vis_folder):
 
+    def prep(img, *, mean=[0.], std=[0.], transform=None):
+        if img.shape[0] == 3:
+            img = img * std[:, None, None] + mean[:, None, None]
+            img = torch.clip(img, 0, 1)
+        if transform is not None:
+            img = transform(img)
+        else:
+            img = (img.numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+            if img.shape[2] == 1:
+                img = img[:, :, 0]
+        return img
+
     # transform = torchvision.transforms.ToPILImage(mode=dataset.color)
 
-    prep1 = functools.partial(prep,
-                              mean=dataset.mean,
-                              std=dataset.std)
+    j = int(name.split('-')[-1])
+
+    imprep = functools.partial(prep, mean=dataset.mean, std=dataset.std)
 
     imageio.imwrite(os.path.join(vis_folder, name + ".result-{0}.png"),
-                    prep1(results[0]))
+                    imprep(results[0][j, ...]))
 
     example = {
         "name": name,
@@ -181,15 +241,16 @@ def visualize(dataset,
     }
     for i in range(1, len(results)):
         example["attentions"].append(name + f".att-{i}.png")
-        t_att = text_attentions[i-1][:, 0].detach().cpu().numpy().ravel().tolist()
+        t_att = text_attentions[i-1][j, :].numpy().ravel().tolist()
         t_att = " | ".join([f"{a:.1f}" for a in t_att])
         example["text_attentions"].append(t_att)
         example["results"].append(name + f".result-{i}.png")
         imageio.imwrite(os.path.join(vis_folder, name + f".att-{i}.png"),
-                        prep(attentions[i-1]))
+                        prep(attentions[i-1][j, ...]))
         imageio.imwrite(os.path.join(vis_folder, name + f".result-{i}.png"),
-                        prep1(results[i]))
+                        imprep(results[i][j, ...]))
     return example
+
 
 def render_html(visualizations, vis_folder):
     with open(os.path.join(vis_folder, 'index.html'), "w") as writer:
@@ -205,32 +266,104 @@ def render_html(visualizations, vis_folder):
             writer("<br>")
 
 
-def flags_to_path():
-    root = os.path.join("vis", FLAGS.datatype, FLAGS.modeltype)
-    if "VQVAE" in FLAGS.modeltype:
-        return os.path.join(root,
-                            (f"beta_{FLAGS.beta}_ncodes_{FLAGS.n_codes}_"
-                             f"ldim_{FLAGS.n_latent}_dim_{FLAGS.h_dim}_"
-                             f"lr_{FLAGS.lr}")
-                            )
+def filter_model(gpu, ngpus_per_node, args):
+    args.gpu = gpu
+    print(f"myrank: {args.rank} mygpu: {gpu}")
+    if args.gpu is not None:
+        logging.info("Use GPU: {} for training".format(args.gpu))
+
+    if args.distributed:
+        if args.dist_url == "env://" and args.rank == -1:
+            args.rank = int(os.environ["RANK"])
+        if args.multiprocessing_distributed:
+            # For multiprocessing distributed training, rank needs to be the
+            # global rank among all the processes
+            args.rank = args.rank * ngpus_per_node + args.gpu
+        utils.init_process(backend=args.dist_backend,
+                           init_method=args.dist_url,
+                           size=args.world_size,
+                           rank=args.rank)
+
+    if args.datatype == "setpp":
+        train = SetDataset("data/setpp/", split="train")
+        test = SetDataset("data/setpp/",
+                          split="test",
+                          transform=train.transform,
+                          vocab=train.vocab)
+    elif args.datatype == "shapes":
+        train = ShapeDataset(root="data/shapes/", split="train")
+        test = ShapeDataset(root="data/shapes/",
+                            split="test",
+                            transform=train.transform,
+                            vocab=train.vocab)
+    elif args.datatype == "clevr":
+        train = CLEVRDataset("data/clevr/", split="trainA")
+        test = CLEVRDataset("data/clevr/",
+                            split="valB",
+                            transform=train.transform,
+                            vocab=train.vocab)
     else:
-        return os.path.join(root,
-                            (f"beta_{FLAGS.beta}_ldim_{FLAGS.n_latent}_"
-                             f"dim_{FLAGS.h_dim}"
-                             f"_lr_{FLAGS.lr}")
-                            )
+        train = SCANDataset("data/scan/", split="train")
+        test = SCANDataset("data/scan/",
+                           split="test",
+                           transform=train.transform,
+                           vocab=train.vocab)
 
+    vis_folder = os.path.join("vis", args.datatype, "FilterModel")
+    os.makedirs(vis_folder, exist_ok=True)
+    logging.info("vis folder: %s", vis_folder)
 
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    model = FilterModel(
+        vocab=train.vocab,
+        n_downsample=2,
+        n_latent=args.n_latent,
+        n_steps=10
+    )
+
+    if args.distributed:
+        if args.gpu is not None:
+            torch.cuda.set_device(args.gpu)
+            model.cuda(args.gpu)
+            print('single gpu per process')
+            # When using a single GPU per process and per
+            # DistributedDataParallel, we need to divide the batch size
+            # ourselves based on the total number of GPUs we have
+            args.n_batch = int(args.n_batch / ngpus_per_node)
+            args.n_workers = int((args.n_workers + ngpus_per_node - 1) / ngpus_per_node)
+            model = DistributedDataParallel(model, device_ids=[args.gpu])
+        else:
+            model.cuda()
+            # DistributedDataParallel will divide and allocate batch_size to all
+            # available GPUs if device_ids are not set
+            print('using DDP')
+            model = DistributedDataParallel(model)
+    elif args.gpu is not None:
+        logging.info('using single gpu')
+        torch.cuda.set_device(args.gpu)
+        model = model.cuda(args.gpu)
+    else:
+        # DataParallel will divide and allocate batch_size to all available GPUs
+        print('using data parallel')
+        model = torch.nn.DataParallel(model).cuda()
+
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+
+    train_filter_model(model,
+                       train,
+                       test,
+                       optimizer,
+                       vis_folder,
+                       n_batch=args.n_batch,
+                       epoch=args.n_epoch,
+                       n_workers=args.n_workers,
+                       distributed=args.distributed,
+                       ngpus_per_node=ngpus_per_node,
+                       gpu=args.gpu,
+                       rank=args.rank)
+    utils.cleanup()
 
 
 def train_vae():
-    set_seed(FLAGS.seed)
-
     if FLAGS.datatype == "setpp":
         train = SetDataset("data/setpp/", split="train")
         test = SetDataset("data/setpp/",
@@ -293,13 +426,15 @@ def train_vae():
                         batch_size=FLAGS.n_batch,
                         shuffle=True,
                         collate_fn=train.collate,
-                        num_workers=4)
+                        num_workers=FLAGS.n_workers,
+                        worker_init_fn=utils.worker_init_fn)
 
     test_loader = DataLoader(test,
                              batch_size=32,
                              shuffle=True,
                              collate_fn=train.collate,
-                             num_workers=4)
+                             num_workers=FLAGS.n_workers,
+                             worker_init_fn=utils.worker_init_fn)
 
     generator = iter(loader)
 
@@ -353,7 +488,7 @@ def train_vae():
 
 def train_cvae():
     assert FLAGS.vae_path != ""
-    set_seed(FLAGS.seed)
+
     if FLAGS.datatype == "setpp":
         train = SetDataset("data/setpp/", split="train")
         test = SetDataset("data/setpp/",
@@ -390,13 +525,13 @@ def train_cvae():
                             batch_size=FLAGS.n_batch,
                             shuffle=True,
                             collate_fn=train.collate,
-                            num_workers=4)
+                            num_workers=FLAGS.n_workers)
 
         test_loader = DataLoader(test,
                                  batch_size=36,
                                  shuffle=True,
                                  collate_fn=train.collate,
-                                 num_workers=4)
+                                 num_workers=FLAGS.n_workers)
     else:
         if FLAGS.modeltype == "CVQVAE":
             model = CVQVAE(3,
@@ -423,12 +558,12 @@ def train_cvae():
             loader = DataLoader(train,
                                 batch_size=FLAGS.n_batch,
                                 shuffle=True, collate_fn=train.collate,
-                                num_workers=4)
+                                num_workers=FLAGS.n_workers)
             test_loader = DataLoader(test,
                                      batch_size=32,
                                      shuffle=True,
                                      collate_fn=train.collate,
-                                     num_workers=4)
+                                     num_workers=FLAGS.n_workers)
 
             model.eval()
             T = torchvision.transforms.ToPILImage(mode=train.color)
@@ -547,7 +682,7 @@ def evaluate_vqvae(model, loader):
         img = img.to(device)
         cmd = cmd.to(device)
         cnt += img.shape[0]
-        loss, data_recon, recon_error, *_ = model(img, cmd)
+        _, _, recon_error, *_ = model(img, cmd)
         nll = model.nll(img, cmd)
         val_res_recon_error += recon_error.item()
         val_res_nll += nll.item()
@@ -573,7 +708,7 @@ def evaluate_cvae(model,loader):
 
 
 def img2code():
-    set_seed(FLAGS.seed)
+
 
     if FLAGS.datatype == "setpp":
         train = SetDataset("data/setpp/", split="train")
@@ -624,12 +759,12 @@ def img2code():
                               batch_size=FLAGS.n_batch,
                               shuffle=False,
                               collate_fn=train.collate,
-                              num_workers=4)
+                              num_workers=FLAGS.n_workers)
     test_loader = DataLoader(test,
                              batch_size=FLAGS.n_batch,
                              shuffle=False,
                              collate_fn=train.collate,
-                             num_workers=4)
+                             num_workers=FLAGS.n_workers)
     for (split, loader) in zip(("train", "test"), (train_loader, test_loader)):
         generator = iter(loader)
         with open(os.path.join(vis_folder, f"{split}_encodings.txt"), "w") as f:
@@ -646,21 +781,70 @@ def img2code():
                 for k in range(img.shape[0]):
                     encc = encodings[k].flatten().detach().cpu().numpy()
                     encc = [str(e) for e in encc]
-                    cmdc = train.vocab.decode_plus(cmd[:,k].detach().cpu().numpy())
+                    cmdc = train.vocab.decode_plus(cmd[:, k].detach().cpu().numpy())
                     line = " ".join(cmdc) + "\t" + " ".join(encc) + "\t" + names[k] + "\n"
                     f.write(line)
 
 
-def main(argv):
+def flags_to_path():
+    root = os.path.join("vis", FLAGS.datatype, FLAGS.modeltype)
+
+    if "VQVAE" in FLAGS.modeltype:
+        return os.path.join(root,
+                            (f"beta_{FLAGS.beta}_ncodes_{FLAGS.n_codes}_"
+                             f"ldim_{FLAGS.n_latent}_dim_{FLAGS.h_dim}_"
+                             f"lr_{FLAGS.lr}")
+                            )
+    else:
+        return os.path.join(root,
+                            (f"beta_{FLAGS.beta}_ldim_{FLAGS.n_latent}_"
+                             f"dim_{FLAGS.h_dim}"
+                             f"_lr_{FLAGS.lr}")
+                            )
+
+
+def main(_):
+    if FLAGS.rank == 0:
+        logging._absl_handler.setFormatter(logging.logging.Formatter(
+                    '%(asctime)s [%(filename)s:%(lineno)d] %(message)s', "%H:%M:%S"))
+
+    if FLAGS.seed is not None:
+        utils.set_seed(FLAGS.seed + FLAGS.rank)
+
     if FLAGS.filter_model:
-        return train_lexgen()
+        if FLAGS.gpu is not None:
+            logging.warning('You have chosen a specific GPU. This '
+                         'will completely disable data parallelism.')
+
+        if FLAGS.dist_url == "env://" and FLAGS.world_size == -1:
+            FLAGS.world_size = int(os.environ["WORLD_SIZE"])
+
+        FLAGS.distributed = FLAGS.world_size > 1 or FLAGS.multiprocessing_distributed
+
+        ngpus_per_node = torch.cuda.device_count()
+
+        if FLAGS.multiprocessing_distributed:
+            # Since we have ngpus_per_node processes per node, the total world_size
+            # needs to be adjusted accordingly
+            FLAGS.world_size = ngpus_per_node * FLAGS.world_size
+            # Use torch.multiprocessing.spawn to launch distributed processes: the
+            # main_worker process function
+            args = utils.ConfigDict(
+                              {k: v.value for (k, v) in FLAGS.__flags.items()})
+
+            torch.multiprocessing.spawn(filter_model, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+        else:
+            # Simply call main_worker function
+            filter_model(FLAGS.gpu, ngpus_per_node, FLAGS)
+        return -1
     if FLAGS.extract_codes:
         return img2code()
+    elif FLAGS.modeltype.startswith("C"):
+        return train_cvae()
     else:
-        if FLAGS.modeltype.startswith("C"):
-            return train_cvae()
-        else:
-            return train_vae()
+        return train_vae()
+
 
 if __name__ == "__main__":
+    logging.info(f"DEVICE: {device}")
     app.run(main)

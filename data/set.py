@@ -8,11 +8,11 @@ from torch.nn.utils.rnn import pad_sequence
 import torchvision.transforms as transforms
 from PIL import Image
 from seq2seq import Vocab
-
+from absl import logging
 
 class SetDataset(object):
-    def __init__(self, root="data/setpp/", split="train", transform=None, vocab=None, color="RGB", size=(64,64)):
-        self.root  = root
+    def __init__(self, root="data/setpp/", split="train", transform=None, vocab=None, color="RGB", size=(64, 64)):
+        self.root = root
         self.split = split
         self.color = color
         self.size = size
@@ -32,7 +32,7 @@ class SetDataset(object):
             self.vocab = vocab
 
         random.shuffle(self.annotations)
-        print(f"{split}: {len(self.annotations)}")
+        logging.info(f"{split}: {len(self.annotations)}")
 
         if transform is None:
             T = transforms.ToTensor()
@@ -55,6 +55,8 @@ class SetDataset(object):
             self.transform = transforms.Compose([transforms.ToTensor(),
                                                 transforms.Normalize(self.mean, self.std)])
         else:
+            self.mean = transform.transforms[-1].mean
+            self.std = transform.transforms[-1].std
             self.transform = transform
 
 

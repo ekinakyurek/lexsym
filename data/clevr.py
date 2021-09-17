@@ -9,16 +9,17 @@ import torchvision.transforms as transforms
 from PIL import Image
 from seq2seq import Vocab
 import math
+from absl import logging
 
 
 class CLEVRDataset(object):
-    def __init__(self, root="data/clevr/", split="trainA", transform=None, vocab=None, color="RGB", size=(128,128)):
+    def __init__(self, root="data/clevr/", split="trainA", transform=None, vocab=None, color="RGB", size=(128, 128)):
         self.root = root
         self.split = split
         self.color = color
         self.size = size
 
-        with open(os.path.join(self.root,"scenes",f"CLEVR_{split}_scenes.json")) as reader:
+        with open(os.path.join(self.root, "scenes", f"CLEVR_{split}_scenes.json")) as reader:
             self.annotations = json.load(reader)["scenes"]
 
         # with open(self.root+"splits.json") as reader:
@@ -26,6 +27,8 @@ class CLEVRDataset(object):
 
         if vocab is None:
             self.vocab = Vocab()
+        else:
+            self.vocab = vocab
 
         for annotation in self.annotations:
             objects = annotation["objects"]
@@ -45,7 +48,7 @@ class CLEVRDataset(object):
         # self.annotations = [a for a in self.annotations if len(a['objects'])<=3]
         # pdb.set_trace()
         random.shuffle(self.annotations)
-        print(f"{split}: {len(self.annotations)}")
+        logging.info(f"{split}: {len(self.annotations)}")
 
         if transform is None:
             T = transforms.Compose([transforms.ToTensor(),
@@ -72,6 +75,8 @@ class CLEVRDataset(object):
                                                 transforms.CenterCrop(self.size),
                                                 transforms.Normalize(self.mean, self.std)])
         else:
+            self.mean = transform.transforms[-1].mean
+            self.std = transform.transforms[-1].std
             self.transform = transform
 
     def __getitem__(self, i):
@@ -86,7 +91,7 @@ class CLEVRDataset(object):
         return len(self.annotations)
 
     def decode(self, cmd):
-        return [self.rev_vocab[int(i)] for i in cmd]
+        return self.vocab.decode(cmd)
 
     def collate(self, batch):
         cmds, imgs, files = zip(*batch)

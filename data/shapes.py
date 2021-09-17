@@ -8,7 +8,7 @@ from torch.nn.utils.rnn import pad_sequence
 import torchvision.transforms as transforms
 from PIL import Image
 from seq2seq import Vocab
-
+from absl import logging
 
 class ShapeDataset(object):
     def __init__(self, root="data/shapes/", split="train", transform=None, vocab=None, color="RGB", size=(64,64)):
@@ -30,9 +30,8 @@ class ShapeDataset(object):
         else:
             self.vocab = vocab
 
-
         random.shuffle(self.annotations)
-        print(f"{split}: {len(self.annotations)}")
+        logging.info(f"{split}: {len(self.annotations)}")
 
         if transform is None:
             T = transforms.ToTensor()
@@ -55,6 +54,8 @@ class ShapeDataset(object):
             self.transform = transforms.Compose([transforms.ToTensor(),
                                                 transforms.Normalize(self.mean, self.std)])
         else:
+            self.mean = transform.transforms[-1].mean
+            self.std = transform.transforms[-1].std
             self.transform = transform
 
     def __getitem__(self, i):

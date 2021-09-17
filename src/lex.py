@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import math
+from absl import logging
 
 
 def positionalencoding2d(d_model, height, width):
@@ -130,8 +131,9 @@ class FilterModel(nn.Module):
         self.filter = ImageFilter(n_downsample, n_latent, 64)
         self.loss = nn.MSELoss()
 
-    def forward(self, cmd, img):
-        embedding = self.emb(cmd)
+    def forward(self, cmd, img, test=False):
+        self.rnn.flatten_parameters()
+        embedding = self.emb(cmd.transpose(0, 1))
         encoding, _ = self.rnn(embedding)
         encoding = self.proj(encoding)
 
@@ -149,27 +151,35 @@ class FilterModel(nn.Module):
                     keepdim=True)
             text_attention = F.gumbel_softmax(text_attention, hard=False, dim=0)
 
-            #text_attention = torch.zeros_like(text_attention)
-            #i_attend = 1 if i < self.n_steps // 2 else 0
-            #text_attention[i_attend, ...] = 1
+            # text_attention = torch.zeros_like(text_attention)
+            # i_attend = 1 if i < self.n_steps // 2 else 0
+            # text_attention[i_attend, ...] = 1
 
             enc_attended = (encoding * text_attention).sum(dim=0)
             emb_attended = (embedding * text_attention).sum(dim=0)
 
-            att_features = self.att_featurizer(old_result).permute(0, 2, 3, 1)
-            att_map = (enc_attended[:, None, None, :] * att_features).sum(dim=3, keepdim=True)
-            att_map = torch.sigmoid(att_map).permute(0, 3, 1, 2)
+            att_features = self.att_featurizer(old_result)
+            # logging.info(f"att_features before permute: {att_features.shape}")
+            # att_features = att_features.permute(0, 2, 3, 1)
+            # logging.info(f"att_features after permute: {att_features.shape}")
+            # logging.info(f"enc_attended: {enc_attended.shape}")
+            att_map = torch.einsum('bchw,bc->bhw', att_features, enc_attended)
+            att_map = torch.sigmoid(att_map).unsqueeze(dim=1)
+            # att_map = (enc_attended[:, None, None, :] * att_features).sum(dim=3, keepdim=True)
+
+            # att_map = torch.sigmoid(att_map).permute(0, 3, 1, 2)
 
             transformed = self.filter(old_result, emb_attended)
             new_result = att_map * transformed + (1 - att_map) * old_result
-
             attentions.append(att_map)
-            text_attentions.append(text_attention)
+            if test:
+                text_attentions.append(text_attention.transpose(0, 1))
             results.append(new_result)
 
         pred_loss = self.loss(results[-1], img)
         att_loss = torch.stack(attentions).mean()
-
         loss = pred_loss + 0.001 * att_loss
-
-        return loss,results[-1], results, attentions, text_attentions
+        if test:
+            return loss, results[-1], results, attentions, text_attentions
+        else:
+            return loss

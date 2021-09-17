@@ -3,10 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import io
+import random
+import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.ticker as plticker
 import torchvision.transforms.functional as TF
+import os
 
 
 def weights_init(m):
@@ -129,3 +132,38 @@ def number_matrix(encoding, size=(512,512)):
     plt.cla()
     plt.close(fig)
     return figtensor
+
+
+def cpu(tensors):
+    if type(tensors) == list:
+        return [tensor.detach().cpu() for tensor in tensors]
+    else:
+        return tensors.detach().cpu()
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def init_process(rank=0, size=1, backend='nccl', init_method="tcp://127.0.0.1:23456"):
+    """ Initialize the distributed environment. """
+    torch.distributed.init_process_group(backend,
+                                         rank=rank,
+                                         world_size=size,
+                                         init_method=init_method)
+
+
+def cleanup():
+    torch.distributed.destroy_process_group()
+
+
+def worker_init_fn(worker_id, rank=0):
+    np.random.seed(np.random.get_state()[1][0] + worker_id + rank)
+
+
+class ConfigDict(object):
+    def __init__(self, my_dict):
+        for key in my_dict:
+            setattr(self, key, my_dict[key])
