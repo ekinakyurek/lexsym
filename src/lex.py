@@ -5,39 +5,44 @@ import math
 from absl import logging
 
 
-def positionalencoding2d(d_model, height, width):
-    """
-    :param d_model: dimension of the model
-    :param height: height of the positions
-    :param width: width of the positions
-    :return: d_model*height*width position matrix
-    """
-    if d_model % 4 != 0:
-        raise ValueError("Cannot use sin/cos positional encoding with "
-                         "odd dimension (got dim={:d})".format(d_model))
-    pe = torch.zeros(d_model, height, width)
-    # Each dimension use half of d_model
-    d_model = int(d_model / 2)
-    div_term = torch.exp(torch.arange(0., d_model, 2) *
-                         -(math.log(10000.0) / d_model))
-    pos_w = torch.arange(0., width).unsqueeze(1)
-    pos_h = torch.arange(0., height).unsqueeze(1)
-    pe[0:d_model:2, :, :] = torch.sin(pos_w * div_term).transpose(0, 1).unsqueeze(1).repeat(1, height, 1)
-    pe[1:d_model:2, :, :] = torch.cos(pos_w * div_term).transpose(0, 1).unsqueeze(1).repeat(1, height, 1)
-    pe[d_model::2, :, :] = torch.sin(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, width)
-    pe[d_model + 1::2, :, :] = torch.cos(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, width)
-
-    return pe
-
-
 class Positional(nn.Module):
     def __init__(self):
         super().__init__()
+        self._cache = {}
+        self._max_cache_size = 5
+
+    def get_positional_encoding_2d(self, d_model, height, width):
+        """
+        :param d_model: dimension of the model
+        :param height: height of the positions
+        :param width: width of the positions
+        :return: d_model*height*width position matrix
+        """
+        if (d_model, height, width) not in self._cache:
+            if len(self._cache) == self._max_cache_size:
+                raise ValueError('cache size is exceeded for positional encodings')
+            if d_model % 4 != 0:
+                raise ValueError("Cannot use sin/cos positional encoding with "
+                                 "odd dimension (got dim={:d})".format(d_model))
+            pe = torch.zeros(d_model, height, width)
+            # Each dimension use half of d_model
+            d_model = int(d_model / 2)
+            div_term = torch.exp(torch.arange(0., d_model, 2) *
+                                 -(math.log(10000.0) / d_model))
+            pos_w = torch.arange(0., width).unsqueeze(1)
+            pos_h = torch.arange(0., height).unsqueeze(1)
+            pe[0:d_model:2, :, :] = torch.sin(pos_w * div_term).transpose(0, 1).unsqueeze(1).repeat(1, height, 1)
+            pe[1:d_model:2, :, :] = torch.cos(pos_w * div_term).transpose(0, 1).unsqueeze(1).repeat(1, height, 1)
+            pe[d_model::2, :, :] = torch.sin(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, width)
+            pe[d_model + 1::2, :, :] = torch.cos(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, width)
+            self._cache[(d_model, height, width)] = pe
+
+        return self._cache[(d_model, height, width)]
 
     def forward(self, x):
         return (
             x
-            + positionalencoding2d(x.shape[1], x.shape[2], x.shape[3]).to(x.device)
+            + self.get_positional_encoding_2d(*x.shape[1:4]).to(x.device)
         )
 
 class ImageFilter(nn.Module):
@@ -132,7 +137,7 @@ class FilterModel(nn.Module):
         self.loss = nn.MSELoss()
 
     def forward(self, cmd, img, test=False):
-        self.rnn.flatten_parameters()
+        self.rnn.flatten_parameters()  # Needed in data parallel is there a way, is there a way to fix?
         embedding = self.emb(cmd.transpose(0, 1))
         encoding, _ = self.rnn(embedding)
         encoding = self.proj(encoding)

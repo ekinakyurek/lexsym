@@ -21,7 +21,7 @@ for lr in 0.001 0.0003; do
                         --filter_model \
                         --lr ${lr} \
                         --n_workers 4 \
-                        --gpu 0 \
+                        # --gpu 0 \
                         # --distributed \
                         # --multiprocessing_distributed \
                         # --rank 0 \
