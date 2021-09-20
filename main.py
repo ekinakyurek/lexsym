@@ -270,7 +270,7 @@ def filter_model(gpu, ngpus_per_node, args):
     args.gpu = gpu
     print(f"myrank: {args.rank} mygpu: {gpu}")
     if args.gpu is not None:
-        logging.info("Use GPU: {} for training".format(args.gpu))
+        print("Use GPU: {} for training".format(args.gpu))
 
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
