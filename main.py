@@ -1,94 +1,166 @@
 import os
-import torch
-import imageio
-import json
 import random
+import json
+import itertools
+import functools
+import warnings
+import imageio
+import shutil
+
 import numpy as np
+import torch
+
+from absl import app, flags, logging
+from tqdm import tqdm
+
 from torch import optim
 from torch.utils import data as torch_data
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel
-from tqdm import tqdm
 
 from src.lex import FilterModel
-from src.vqvae import VectorQuantizedVAE, CVQVAE
+from src.vqvae import VectorQuantizedVAE
+from src.vqvae import CVQVAE
 from src.vae import VAE, CVAE
 from src.dae import DAE
 from src import utils
-# from src.utils import make_number_grid
 
 from data.shapes import ShapeDataset
 from data.set import SetDataset
 from data.scan import SCANDataset
 from data.clevr import CLEVRDataset
 import torchvision
-from torchvision.utils import make_grid, save_image
-import itertools
-import functools
-import warnings
-from absl import app, flags, logging
-import pdb
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+from torchvision.utils import make_grid
+from torchvision.utils import save_image
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer("h_dim", 32, "")
-flags.DEFINE_integer("rnn_dim", 256, "")
-flags.DEFINE_integer("rnn_n_layers", 2, "")
-flags.DEFINE_float("rnn_drop", 0.1, "")
-flags.DEFINE_integer("n_latent", 24, "")
-flags.DEFINE_integer("n_batch", 128, "")
-flags.DEFINE_integer("n_iter", 100000, "")
-flags.DEFINE_integer("n_epoch", 50, "")
-flags.DEFINE_integer("n_codes", 10, "")
-flags.DEFINE_integer("n_workers", 4, "")
-flags.DEFINE_integer("seed", 0, "")
-flags.DEFINE_float("beta", 1.0, "")
-flags.DEFINE_float("commitment_cost", 0.25, "")
-flags.DEFINE_string("datatype", "setpp", "")
-flags.DEFINE_string("modeltype", "VQVAE", "")
-flags.DEFINE_float("decay", 0.99, "")
-flags.DEFINE_float("lr", 1e-3, "")
-flags.DEFINE_float("epsilon", 1e-5, "")
-flags.DEFINE_bool("debug", False, "")
-flags.DEFINE_bool("highdrop", False, "")
-flags.DEFINE_bool("highdroptest", False, "")
-flags.DEFINE_float("highdropvalue", 0., "")
-flags.DEFINE_bool("copy", False, "")
-flags.DEFINE_string("vae_path", "", "pretrained vae path")
-flags.DEFINE_string("lex_path", "", "prelearned lexicon")
-flags.DEFINE_string("model_path", "", "prelearned model")
-flags.DEFINE_bool("extract_codes", False, "")
-flags.DEFINE_bool("filter_model", False, "")
-flags.DEFINE_bool("test", False, "")
+flags.DEFINE_integer('h_dim', default=32,
+                     help='Hidden dim in various models.')
+
+flags.DEFINE_integer('rnn_dim', default=256,
+                     help='RNN hidden dim.')
+
+flags.DEFINE_integer('rnn_n_layers', default=2,
+                     help='Number of layers for RNNs.')
+
+flags.DEFINE_float('rnn_drop', default=0.1,
+                   help='Dropout rate in RNNs.')
+
+flags.DEFINE_integer('n_latent', default=24,
+                     help='Latent dimension for vaes.')
+
+flags.DEFINE_integer('n_batch', default=128,
+                     help='Minibatch size to train.')
+
+flags.DEFINE_integer('n_iter', default=100000,
+                     help='Number of iteration to train. Might not be used if '
+                          'n_epoch is used.')
+
+flags.DEFINE_integer('n_epoch', default=50,
+                     help='Number of epochs to train. Might not be used if '
+                          'n_iter is used.')
+
+flags.DEFINE_integer('n_codes', default=10,
+                     help='Sets number of codes in vqvae.')
+
+flags.DEFINE_integer('n_workers', default=4,
+                     help='Sets num workers for data loaders.')
+
+flags.DEFINE_integer('seed', default=0,
+                     help='Sets global seed.')
+
+flags.DEFINE_float('beta', default=1.0,
+                   help='Sets beta parameter in beta vae.')
+
+flags.DEFINE_float('commitment_cost', default=0.25,
+                   help='Sets commitment lost in vqvae')
+
+flags.DEFINE_string('datatype', default='setpp',
+                    help='Sets which dataset to use.')
+
+flags.DEFINE_string("modeltype", default='VQVAE',
+                    help='VAE, VQVAE, TODO: fix this flag for filter model')
+
+flags.DEFINE_float('decay', default=0.99,
+                   help='set learning rate value for optimizers')
+
+flags.DEFINE_float('lr', default=1e-3,
+                   help='Set learning rate for optimizers.')
+
+flags.DEFINE_float('epsilon', default=1e-5,
+                   help='Sets epsilon value in VQVAE.')
+
+flags.DEFINE_bool("debug", default=False,
+                  help='Enables debug mode.')
+
+flags.DEFINE_bool('highdrop', default=False,
+                  help='Enables high dropout to encourage copy.')
+
+flags.DEFINE_bool('highdroptest', default=False,
+                  help='Applies high dropout in test as well.')
+
+flags.DEFINE_float("highdropvalue", default=0.,
+                   help='High dropout value to encourage copying.')
+
+flags.DEFINE_bool('copy', default=False,
+                  help='Enable copy in seq2seq models')
+
+flags.DEFINE_string('vae_path', default='',
+                    help='A pretrained vae path for conditional vae models.')
+
+flags.DEFINE_string("lex_path", default='',
+                    help='A prelearned lexicon path to be used in text-image '
+                         'vqvae models')
+
+flags.DEFINE_string('model_path', default='',
+                    help="Model path to load a pretrained model")
+
+flags.DEFINE_bool('extract_codes', default=False,
+                  help='Extract VQVAE codes for training and test set given a '
+                       'pretrained vae')
+
+flags.DEFINE_bool('filter_model', default=False,
+                  help='To run filter model experiments.')
+
+flags.DEFINE_bool('test', default=False,
+                  help='Only runs evaluations.')
 
 
-flags.DEFINE_bool("distributed", False, "")
+flags.DEFINE_bool('distributed', default=False,
+                  help='Enables distributed data parallel.')
 
 flags.DEFINE_integer('gpu', default=None,
-                     help='GPU id to use.')
+                     help='Specifies which GPU to use. If None DataParallel '
+                          'mode will be enabled')
 
 flags.DEFINE_integer('rank', default=0,
-                     help='node rank for distributed training')
+                     help='Node rank for distributed training.')
 
 flags.DEFINE_integer('world_size', default=1,
-                     help='ngpus')
+                     help='ngpus in distributed data parallel.')
 
 flags.DEFINE_string('dist_backend', default='nccl',
-                    help='distributed backend')
+                    help='Backend to use for distributed data parallel.')
 
 flags.DEFINE_string('dist_url', default='tcp://127.0.0.1:23456',
-                    help='url used to set up distributed training')
+                    help='Url used to set up distributed training.')
 
 flags.DEFINE_bool('multiprocessing_distributed', False,
                   help='Use multi-processing distributed training to launch '
                        'N processes per node, which has N GPUs. This is the '
-                       'fastest way to use PyTorch for either single node or'
-                       ' multi node data parallel training')
+                       'fastest way to use PyTorch for either single node or '
+                       'multi node data parallel training')
 
+flags.DEFINE_string('tensorboard', default=None,
+                    help='Use tensorboard for logging losses.')
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def save_checkpoint(state, filename='checkpoint.pth.tar'):
+    torch.save(state, filename)
 
 def train_filter_model(model,
                        train,
@@ -121,6 +193,7 @@ def train_filter_model(model,
                         num_workers=n_workers,
                         worker_init_fn=worker_init_fn)
 
+    total_steps = 0
     for i in range(epoch):
         if train_sampler:
             train_sampler.set_epoch(i)
@@ -133,51 +206,65 @@ def train_filter_model(model,
             if gpu is not None:
                 cmd = cmd.cuda(gpu, non_blocking=True)
                 img = img.cuda(gpu, non_blocking=True)
-            loss = model(cmd, img, test=False)
+            loss, scalars = model(cmd, img, test=False)
+            loss = loss.mean()
             optimizer.zero_grad()
-            loss.mean().backward()
+            loss.backward()
             optimizer.step()
-            total_loss += loss.mean().item()
+            total_steps += 1
+            total_loss += loss.item()
             total_item += img.shape[0]
             if main_worker:
                 tloader.set_description(
                  f"Epoch {i}, Avg Loss (Train): %.4f, N: %d" %
                  (total_loss/total_item, total_item))
+                if hasattr(logging, 'tb_writer'):
+                    scalars = dict((k, v.mean().item()) for (k, v) in scalars.items())
+                    logging.tb_writer.add_scalars('Train/Loss', scalars, total_steps)
         if main_worker:
             logging.info(f"Epoch {i} (Train): %.4f", total_loss / total_item)
             model.eval()
             train_vis = visualize_filter_preds(model,
                                                train,
                                                vis_folder,
-                                               gpu=gpu,
-                                               n_workers=n_workers,
-                                               it=i)
+                                               prefix=f"train-{i}",
+                                               gpu=gpu)
 
             test_vis = visualize_filter_preds(model,
                                               test,
                                               vis_folder,
-                                              gpu=gpu,
-                                              n_workers=n_workers,
-                                              it=i)
+                                              prefix=f"test-{i}",
+                                              gpu=gpu)
 
-            render_html(train_vis+test_vis, vis_folder)
+            prior_vis = visualize_filter_preds(model,
+                                               test,
+                                               vis_folder,
+                                               prefix=f"prior-{i}",
+                                               gpu=gpu,
+                                               prior=True)
+
+            render_html(train_vis+test_vis+prior_vis, vis_folder)
+
+            save_checkpoint({
+                'epoch': epoch + 1,
+                'state_dict': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+            }, filename=os.path.join(vis_folder, 'checkpoint.pth.tar'))
 
 
 def visualize_filter_preds(model,
                            test,
                            vis_folder,
+                           prefix="train-0",
+                           prior=False,
                            gpu=0,
-                           n_workers=1,
-                           it=0,
-                           n=3):
+                           n_eval=5):
 
     test_loader = DataLoader(test,
-                             batch_size=5,
+                             batch_size=n_eval,
                              shuffle=False,
                              pin_memory=True,
-                             collate_fn=test.collate,
-                             num_workers=n_workers,
-                             worker_init_fn=utils.worker_init_fn)
+                             collate_fn=test.collate)
 
     visualizations = []
     cmd, img, _ = next(iter(test_loader))
@@ -185,14 +272,14 @@ def visualize_filter_preds(model,
     if gpu is not None:
         cmd = cmd.cuda(gpu, non_blocking=True)
         img = img.cuda(gpu, non_blocking=True)
-    _, *extras = model(**dict(cmd=cmd, img=img, test=True))
-    _, results, attentions, text_attentions = map(utils.cpu, extras)
+    _, _, _, *extras = model(**dict(cmd=cmd, img=img, test=True, prior=prior))
+    results, attentions, text_attentions = map(utils.cpu, extras)
     cmd = utils.cpu(cmd).numpy()
     img = utils.cpu(img).numpy()
-    for j in range(n):
+    for j in range(n_eval):
         visualizations.append(visualize(
             test,
-            f"train-{it}-{j}",
+            f"{prefix}-{j}",
             test.decode(cmd[j, :]),
             results,
             attentions,
@@ -253,17 +340,39 @@ def visualize(dataset,
 
 
 def render_html(visualizations, vis_folder):
+    prefix = """<!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        .hovering{
+                           height: 32px;
+                        }
+                		.hovering:hover {
+                           transform: scale(4.0);
+                        }
+                </style>
+                </head>
+                <body>
+            """
+    suffix = """
+                </body>
+                </html>
+             """
     with open(os.path.join(vis_folder, 'index.html'), "w") as writer:
         writer = functools.partial(print, file=writer)
+        writer(prefix)
         for vis in visualizations:
             writer("<p>", vis["name"], vis["command"], "</p>")
             writer("<table>")
             init = vis["init-result"]
-            writer(f"<tr><td></td><td><img src='{init}' height=30></td></tr>")
-            for att, result, t_att in zip(vis["attentions"], vis["results"], vis["text_attentions"]):
-                writer(f"<tr><td><img src='{att}' height=30></td><td><img src='{result}' height=30></td><td>{t_att}</td></tr>")
+            writer(f"<tr><td></td><td><img class='hovering' src='{init}'></td></tr>")
+            for att, result, t_att in zip(vis["attentions"],
+                                          vis["results"],
+                                          vis["text_attentions"]):
+                writer(f"<tr><td><img class='hovering' src='{att}'></td><td><img class='hovering' src='{result}'></td><td>{t_att}</td></tr>")
             writer("</table>")
             writer("<br>")
+        writer(suffix)
 
 
 def filter_model(gpu, ngpus_per_node, args):
@@ -313,11 +422,18 @@ def filter_model(gpu, ngpus_per_node, args):
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)
 
+    vae = VAE(3,
+              FLAGS.h_dim,
+              FLAGS.n_latent // 16,
+              beta=FLAGS.beta,
+              size=train.size)
+
     model = FilterModel(
         vocab=train.vocab,
         n_downsample=2,
         n_latent=args.n_latent,
-        n_steps=10
+        n_steps=10,
+        vae=vae,
     )
 
     if args.distributed:
@@ -360,7 +476,9 @@ def filter_model(gpu, ngpus_per_node, args):
                        ngpus_per_node=ngpus_per_node,
                        gpu=args.gpu,
                        rank=args.rank)
-    utils.cleanup()
+    if args.distributed:
+        utils.cleanup()
+
 
 
 def train_vae():
@@ -709,7 +827,6 @@ def evaluate_cvae(model,loader):
 
 def img2code():
 
-
     if FLAGS.datatype == "setpp":
         train = SetDataset("data/setpp/", split="train")
         test = SetDataset("data/setpp/",
@@ -804,6 +921,10 @@ def flags_to_path():
 
 
 def main(_):
+    if FLAGS.tensorboard:
+        from torch.utils.tensorboard import SummaryWriter
+        logging.tb_writer = SummaryWriter(log_dir=FLAGS.tensorboard,
+                                 comment=f'{FLAGS.datatype}/{FLAGS.modeltype}')
     if FLAGS.rank == 0:
         logging._absl_handler.setFormatter(logging.logging.Formatter(
                     '%(asctime)s [%(filename)s:%(lineno)d] %(message)s', "%H:%M:%S"))
@@ -836,13 +957,15 @@ def main(_):
         else:
             # Simply call main_worker function
             filter_model(FLAGS.gpu, ngpus_per_node, FLAGS)
-        return -1
-    if FLAGS.extract_codes:
-        return img2code()
+    elif FLAGS.extract_codes:
+        img2code()
     elif FLAGS.modeltype.startswith("C"):
-        return train_cvae()
+        train_cvae()
     else:
-        return train_vae()
+        train_vae()
+
+    if FLAGS.tensorboard:
+        logging.tb_writer.close()
 
 
 if __name__ == "__main__":

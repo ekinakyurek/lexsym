@@ -53,7 +53,8 @@ class CLEVRDataset(object):
         if transform is None:
             T = transforms.Compose([transforms.ToTensor(),
                                     transforms.Resize(int(math.ceil(self.size[0]*1.1))),
-                                    transforms.CenterCrop(self.size)])
+                                    transforms.CenterCrop(self.size),
+                                    ])
             running_mean = torch.zeros(3, dtype=torch.float32)
             N = min(250, len(self.annotations))
             for i in range(N):

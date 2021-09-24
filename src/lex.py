@@ -3,7 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 import math
 from absl import logging
-
+from . import vae
 
 class Positional(nn.Module):
     def __init__(self):
@@ -111,43 +111,58 @@ class ImageFilter(nn.Module):
         return features
 
 class FilterModel(nn.Module):
-    def __init__(self, vocab, n_downsample, n_latent, n_steps):
+    def __init__(self, vocab, n_downsample, n_latent, n_steps, vae=None):
         super().__init__()
 
         self.vocab = vocab
         self.n_latent = n_latent
         self.n_steps = n_steps
+        self.h_dim = 128
 
-        self.emb = nn.Embedding(len(vocab), 64)
-        self.rnn = nn.LSTM(64, n_latent, 1, bidirectional=True)
+        self.emb = nn.Embedding(len(vocab), self.h_dim)
+        self.rnn = nn.LSTM(self.h_dim, n_latent, 1, bidirectional=True)
         self.proj = nn.Linear(n_latent * 2, n_latent)
 
         self.lookups = nn.Linear(n_latent, n_steps * n_latent)
 
-        self.att_featurizer = nn.Sequential(
+        self.att_featurizers = nn.ModuleList([nn.Sequential(
             nn.ReplicationPad2d(2),
             nn.Conv2d(3, n_latent, 5, 1),
             nn.LeakyReLU(0.2),
             Positional(),
             nn.Conv2d(n_latent, n_latent, 1, 1),
             nn.LeakyReLU(0.2),
-        )
+        ) for i in range(n_steps)])
 
-        self.filter = ImageFilter(n_downsample, n_latent, 64)
-        self.loss = nn.MSELoss()
+        self.filter = ImageFilter(n_downsample, n_latent, self.h_dim)
 
-    def forward(self, cmd, img, test=False):
+        self.vae = vae
+        self.loss = nn.MSELoss(reduction='sum')
+
+    def forward(self, cmd, img, test=False, prior=False):
         self.rnn.flatten_parameters()  # Needed in data parallel is there a way, is there a way to fix?
         embedding = self.emb(cmd.transpose(0, 1))
         encoding, _ = self.rnn(embedding)
         encoding = self.proj(encoding)
-
         lookups = self.lookups(encoding.mean(dim=0)).view(-1, self.n_steps, self.n_latent)
+
+        if self.vae is not None:
+            if prior:
+                init, z = self.vae.sample(B=cmd.shape[0])
+                kl_loss = .0
+            else:
+                mu, logvar = self.vae.encode(img)
+                z = self.vae.reparameterize(mu, logvar)
+                kl_div = self.vae.kl_div(mu, logvar)
+                init = self.vae.decoder(z)
+                kl_loss = self.vae.beta * kl_div
+        else:
+            init = torch.zeros_like(img)
+            kl_loss = .0
 
         results = []
         attentions = []
         text_attentions = []
-        init = torch.zeros_like(img)
         results.append(init)
         for i in range(self.n_steps):
             old_result = results[-1]
@@ -163,7 +178,7 @@ class FilterModel(nn.Module):
             enc_attended = (encoding * text_attention).sum(dim=0)
             emb_attended = (embedding * text_attention).sum(dim=0)
 
-            att_features = self.att_featurizer(old_result)
+            att_features = self.att_featurizers[i](old_result)
             # logging.info(f"att_features before permute: {att_features.shape}")
             # att_features = att_features.permute(0, 2, 3, 1)
             # logging.info(f"att_features after permute: {att_features.shape}")
@@ -181,10 +196,13 @@ class FilterModel(nn.Module):
                 text_attentions.append(text_attention.transpose(0, 1))
             results.append(new_result)
 
-        pred_loss = self.loss(results[-1], img)
-        att_loss = torch.stack(attentions).mean()
-        loss = pred_loss + 0.001 * att_loss
+        pred_loss = self.loss(results[-1], img).div(init.shape[0])
+        att_loss = torch.stack(attentions).sum().div(init.shape[0])
+        scalars = {'pred_loss': pred_loss,
+                   'att_loss': att_loss,
+                   'kl_loss': torch.tensor(kl_loss, device=pred_loss.device)}
+        loss = pred_loss + 0.0001 * att_loss + kl_loss
         if test:
-            return loss, results[-1], results, attentions, text_attentions
+            return loss, scalars, results[-1], results, attentions, text_attentions
         else:
-            return loss
+            return loss, scalars
