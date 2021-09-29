@@ -55,6 +55,9 @@ flags.DEFINE_integer('n_latent', default=24,
 flags.DEFINE_integer('n_batch', default=128,
                      help='Minibatch size to train.')
 
+flags.DEFINE_integer('visualize_every', default=10,
+                     help='Frequency of visualization.')
+
 flags.DEFINE_integer('n_iter', default=100000,
                      help='Number of iteration to train. Might not be used if '
                           'n_epoch is used.')
@@ -167,6 +170,7 @@ def train_filter_model(model,
                        test,
                        optimizer,
                        vis_folder,
+                       visualize_every=10,
                        n_batch=64,
                        epoch=1,
                        n_workers=1,
@@ -221,7 +225,7 @@ def train_filter_model(model,
                 if hasattr(logging, 'tb_writer'):
                     scalars = dict((k, v.mean().item()) for (k, v) in scalars.items())
                     logging.tb_writer.add_scalars('Train/Loss', scalars, total_steps)
-        if main_worker:
+        if main_worker and (i+1) % visualize_every == 0:
             logging.info(f"Epoch {i} (Train): %.4f", total_loss / total_item)
             model.eval()
             train_vis = visualize_filter_preds(model,
@@ -418,7 +422,7 @@ def filter_model(gpu, ngpus_per_node, args):
                            transform=train.transform,
                            vocab=train.vocab)
 
-    vis_folder = os.path.join("vis", args.datatype, "FilterModel")
+    vis_folder = flags_to_path()
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)
 
@@ -469,6 +473,7 @@ def filter_model(gpu, ngpus_per_node, args):
                        test,
                        optimizer,
                        vis_folder,
+                       visualize_every=args.visualize_every,
                        n_batch=args.n_batch,
                        epoch=args.n_epoch,
                        n_workers=args.n_workers,
@@ -907,18 +912,24 @@ def flags_to_path():
     root = os.path.join("vis", FLAGS.datatype, FLAGS.modeltype)
 
     if "VQVAE" in FLAGS.modeltype:
-        return os.path.join(root,
+        path = os.path.join(root,
                             (f"beta_{FLAGS.beta}_ncodes_{FLAGS.n_codes}_"
                              f"ldim_{FLAGS.n_latent}_dim_{FLAGS.h_dim}_"
                              f"lr_{FLAGS.lr}")
                             )
+    elif FLAGS.modeltype == 'FilterModel':
+        path = os.path.join(root,
+                            (f"dim_{FLAGS.n_latent}_"
+                             f"lr_{FLAGS.lr}_"
+                             f"beta_{FLAGS.beta}")
+                            )
     else:
-        return os.path.join(root,
+        path = os.path.join(root,
                             (f"beta_{FLAGS.beta}_ldim_{FLAGS.n_latent}_"
                              f"dim_{FLAGS.h_dim}"
                              f"_lr_{FLAGS.lr}")
                             )
-
+    return path
 
 def main(_):
     if FLAGS.tensorboard:
