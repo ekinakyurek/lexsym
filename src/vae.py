@@ -24,42 +24,47 @@ class VAE(nn.Module):
         self.encoder = nn.Sequential(
             nn.Conv2d(input_dim, dim, 4, 2, 1),
             nn.LeakyReLU(0.2),
-            nn.Conv2d(dim, dim, 4, 2, 1),
+            nn.Conv2d(dim, 2*dim, 4, 2, 1),
             nn.LeakyReLU(0.2),
-            nn.Conv2d(dim, dim, 4, 2, 1),
+            nn.Conv2d(2*dim, 3*dim, 4, 2, 1),
             nn.LeakyReLU(0.2),
-            nn.Conv2d(dim, dim, 5, 1, 0),
+            nn.Conv2d(3*dim, 4*dim, 5, 1, 0),
             nn.LeakyReLU(0.2),
-            nn.Conv2d(dim, z_dim * 2, 3, 1, 0),
+            nn.Conv2d(4*dim, 5*dim*2, 3, 1, 0),
         )
 
         with torch.no_grad():
             mu, _ = self.encoder(torch.ones(1, 3, *size)).chunk(2, dim=1)
-            self.latent_shape = mu.shape[1:]
-            logging.info(f"latent_shape: {self.latent_shape}")
+            self.pre_latent_shape = mu.shape[1:]
+            logging.info(f"pre fc latent_shape: {self.pre_latent_shape}")
+
+        self.latent_shape = (2*7*dim,)
+        logging.info(f"latent_shape: {np.prod(self.latent_shape) // 2}")
 
         self.down_proj = nn.Sequential(nn.Flatten(),
-                                       nn.Linear(2*np.prod(self.latent_shape),
+                                       nn.Linear(2*np.prod(self.pre_latent_shape),
                                        np.prod(self.latent_shape)))
         self.encoder.add_module('down_proj', self.down_proj)
 
-        self.up_proj = nn.Sequential(nn.Linear(np.prod(self.latent_shape) // 2,
-                                     np.prod(self.latent_shape)))
 
-        self.view = View(-1, *self.latent_shape)
+        self.up_proj = nn.Sequential(nn.Linear(np.prod(self.latent_shape) // 2,
+                                     np.prod(self.pre_latent_shape)))
+
+        self.view = View(-1, *self.pre_latent_shape)
 
         self.decoder = nn.Sequential(
             self.up_proj,
             self.view,
-            nn.ConvTranspose2d(z_dim, dim, 3, 1, 0),
+            nn.ConvTranspose2d(5*dim, 4*dim, 3, 1, 0),
             nn.LeakyReLU(0.2),
-            nn.ConvTranspose2d(dim, dim, 5, 1, 0),
+            nn.ConvTranspose2d(4*dim, 3*dim, 5, 1, 0),
             nn.LeakyReLU(0.2),
-            nn.ConvTranspose2d(dim, dim, 4, 2, 1),
+            nn.ConvTranspose2d(3*dim, 2*dim, 4, 2, 1),
             nn.LeakyReLU(0.2),
-            nn.ConvTranspose2d(dim, dim, 4, 2, 1),
+            nn.ConvTranspose2d(2*dim, dim, 4, 2, 1),
             nn.LeakyReLU(0.2),
-            nn.ConvTranspose2d(dim, input_dim, 4, 2, 1)
+            nn.ConvTranspose2d(dim, input_dim, 4, 2, 1),
+            nn.Sigmoid(),
         )
 
         self.apply(weights_init)

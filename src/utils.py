@@ -16,7 +16,7 @@ def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
         try:
-            nn.init.xavier_uniform_(m.weight.data)
+            nn.init.normal_(m.weight.data, std=0.02)
             m.bias.data.fill_(0)
         except AttributeError:
             print("Skipping initialization of ", classname)
@@ -145,6 +145,7 @@ def set_seed(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = True
 
 
 def init_process(rank=0, size=1, backend='nccl', init_method="tcp://127.0.0.1:23456"):
