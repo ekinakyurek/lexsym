@@ -30,7 +30,7 @@ class VAE(nn.Module):
             nn.LeakyReLU(0.2),
             nn.Conv2d(3*dim, 4*dim, 5, 1, 0),
             nn.LeakyReLU(0.2),
-            nn.Conv2d(4*dim, 5*dim*2, 3, 1, 0),
+            nn.Conv2d(4*dim, 2*5*dim, 3, 1, 0),
         )
 
         with torch.no_grad():
@@ -38,7 +38,7 @@ class VAE(nn.Module):
             self.pre_latent_shape = mu.shape[1:]
             logging.info(f"pre fc latent_shape: {self.pre_latent_shape}")
 
-        self.latent_shape = (2*7*dim,)
+        self.latent_shape = (2*8*dim,)
         logging.info(f"latent_shape: {np.prod(self.latent_shape) // 2}")
 
         self.down_proj = nn.Sequential(nn.Flatten(),
@@ -64,7 +64,6 @@ class VAE(nn.Module):
             nn.ConvTranspose2d(2*dim, dim, 4, 2, 1),
             nn.LeakyReLU(0.2),
             nn.ConvTranspose2d(dim, input_dim, 4, 2, 1),
-            nn.Sigmoid(),
         )
 
         self.apply(weights_init)

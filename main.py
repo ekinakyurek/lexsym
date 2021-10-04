@@ -198,6 +198,13 @@ def train_filter_model(model,
                         worker_init_fn=worker_init_fn)
 
     total_steps = 0
+
+    # if model.module.vae is not None:
+    #     target_beta = model.module.vae.beta
+    #     model.module.vae.beta = 0.0
+    #     kl_rate = 2*(target_beta / ((len(train) * epoch) / n_batch))
+    #     print(f"kl rate: {kl_rate}")
+
     for i in range(epoch):
         if train_sampler:
             train_sampler.set_epoch(i)
@@ -216,6 +223,8 @@ def train_filter_model(model,
             loss.backward()
             optimizer.step()
             total_steps += 1
+            # if hasattr(model, 'vae'):
+            #     model.module.vae.beta = min(model.module.vae.beta + kl_rate, target_beta)
             total_loss += loss.item()
             total_item += img.shape[0]
             if main_worker:
@@ -428,14 +437,14 @@ def filter_model(gpu, ngpus_per_node, args):
 
     vae = VAE(3,
               FLAGS.h_dim,
-              FLAGS.n_latent // 16,
+              FLAGS.n_latent,
               beta=FLAGS.beta,
               size=train.size)
 
     model = FilterModel(
         vocab=train.vocab,
         n_downsample=2,
-        n_latent=args.n_latent,
+        n_latent=4*args.n_latent,
         n_steps=10,
         vae=vae,
     )

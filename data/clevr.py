@@ -22,7 +22,7 @@ class CLEVRDataset(object):
         with open(os.path.join(self.root, "scenes", f"CLEVR_{split}_scenes.json")) as reader:
             self.annotations = json.load(reader)["scenes"]
 
-        self.annotations = list(filter(lambda a: len(a['objects']) == 3,
+        self.annotations = list(filter(lambda a: len(a['objects']) < 5,
                                   self.annotations))
 
         # with open(self.root+"splits.json") as reader:
@@ -73,9 +73,9 @@ class CLEVRDataset(object):
                     running_var += ((img - self.mean[:, None, None]) ** 2).mean(dim=(1, 2))
             var = running_var / N
             self.std = torch.sqrt(var)
-
-            self.std = self.mean / self.mean
-            self.mean = 0 * self.mean
+            # 
+            # self.std = self.mean / self.mean
+            # self.mean = 0 * self.mean
 
 
 
