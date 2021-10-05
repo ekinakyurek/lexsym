@@ -52,6 +52,18 @@ flags.DEFINE_float('rnn_drop', default=0.1,
 flags.DEFINE_integer('n_latent', default=24,
                      help='Latent dimension for vaes.')
 
+flags.DEFINE_integer('lex_n_latent', default=64,
+                     help="Latent dimension for lexical model's filters")
+
+flags.DEFINE_integer('lex_n_steps', default=10,
+                     help="Number of steps in lexical model")
+
+flags.DEFINE_integer('lex_n_downsample', default=2,
+                     help="Number of downsampling layers in lexical model")
+
+flags.DEFINE_string('lex_vae_type', default='VAE',
+                    help="VAE type for lexical model among VAE, VQVAE, None")
+
 flags.DEFINE_integer('n_batch', default=128,
                      help='Minibatch size to train.')
 
@@ -328,7 +340,7 @@ def visualize(dataset,
 
     imprep = functools.partial(prep, mean=dataset.mean, std=dataset.std)
 
-    imageio.imwrite(os.path.join(vis_folder, name + ".result-{0}.png"),
+    imageio.imwrite(os.path.join(vis_folder, name + ".result-0.png"),
                     imprep(results[0][j, ...]))
 
     example = {
@@ -435,17 +447,34 @@ def filter_model(gpu, ngpus_per_node, args):
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)
 
-    vae = VAE(3,
-              FLAGS.h_dim,
-              FLAGS.n_latent,
-              beta=FLAGS.beta,
-              size=train.size)
+    if args.lex_vae_type == 'VAE':
+        vae = VAE(3,
+                  FLAGS.h_dim,
+                  FLAGS.n_latent,
+                  beta=FLAGS.beta,
+                  size=train.size)
+    elif args.lex_vae_type == 'VQVAE':
+        vae = VectorQuantizedVAE(3,
+                                 FLAGS.h_dim,
+                                 FLAGS.n_latent,
+                                 n_codes=FLAGS.n_codes,
+                                 cc=FLAGS.commitment_cost,
+                                 decay=FLAGS.decay,
+                                 epsilon=FLAGS.epsilon,
+                                 beta=FLAGS.beta,
+                                 cmdproc=False,
+                                 size=train.size,
+                                 ).to(device)
+    elif args.lex_vae_type == 'None':
+        vae = None
+    else:
+        raise ValueError(f"Unknown vae type {FLAGS.lex_vae_type}")
 
     model = FilterModel(
         vocab=train.vocab,
-        n_downsample=2,
-        n_latent=4*args.n_latent,
-        n_steps=10,
+        n_downsample=args.lex_n_downsample,
+        n_latent=args.lex_n_latent,
+        n_steps=args.lex_n_steps,
         vae=vae,
     )
 
@@ -607,7 +636,7 @@ def train_vae():
                         img = img.to(device)
                         cmd = cmd.to(device)
                         loss, recon, recon_error, *_ = model(img, cmd)
-                        recon = recon.cpu().data * train.std[None, :, None, None] + train.mean[None, abs:, None, None]
+                        recon = recon.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
                         img = img.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
                         res = torch.cat((recon, img), 0).clip_(0, 1)
                         T(make_grid(res)).convert("RGB").save(os.path.join(vis_folder, f"{i}_{j}.png"))
@@ -918,7 +947,7 @@ def img2code():
 
 
 def flags_to_path():
-    root = os.path.join("vis", FLAGS.datatype, FLAGS.modeltype)
+    root = os.path.join("visv2", FLAGS.datatype, FLAGS.modeltype)
 
     if "VQVAE" in FLAGS.modeltype:
         path = os.path.join(root,
@@ -927,7 +956,7 @@ def flags_to_path():
                              f"lr_{FLAGS.lr}")
                             )
     elif FLAGS.modeltype == 'FilterModel':
-        path = os.path.join(root,
+        path = os.path.join(root, FLAGS.lex_vae_type,
                             (f"dim_{FLAGS.n_latent}_"
                              f"lr_{FLAGS.lr}_"
                              f"beta_{FLAGS.beta}")

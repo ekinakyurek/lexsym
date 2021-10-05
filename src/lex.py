@@ -4,6 +4,9 @@ import torch.nn.functional as F
 import math
 from absl import logging
 from . import vae
+from .vqvae import VectorQuantizedVAE
+
+EPS = 1e-5
 
 class Positional(nn.Module):
     def __init__(self):
@@ -120,42 +123,46 @@ class FilterModel(nn.Module):
         self.h_dim = 128
 
         self.emb = nn.Embedding(len(vocab), self.h_dim)
-        self.rnn = nn.LSTM(self.h_dim, n_latent, 1, bidirectional=True)
-        self.proj = nn.Linear(n_latent * 2, n_latent)
+        self.rnn = nn.LSTM(self.h_dim, n_latent, 1, bidirectional=False)
+        self.proj = nn.Linear(n_latent, n_latent)
 
         self.lookups = nn.Linear(n_latent, n_steps * n_latent)
 
-        self.att_featurizers = nn.ModuleList([nn.Sequential(
+        self.att_featurizers = nn.Sequential(
             nn.ReplicationPad2d(2),
             nn.Conv2d(3, n_latent, 5, 1),
             nn.LeakyReLU(0.2),
             Positional(),
             nn.Conv2d(n_latent, n_latent, 1, 1),
             nn.LeakyReLU(0.2),
-        ) for i in range(n_steps)])
+        )
 
         self.filter = ImageFilter(n_downsample, n_latent, self.h_dim)
 
         self.vae = vae
-        self.loss = nn.MSELoss(reduction='sum')
+        self.loss = nn.MSELoss(reduction='mean')
 
     def forward(self, cmd, img, test=False, prior=False):
-        self.rnn.flatten_parameters()  # Needed in data parallel is there a way, is there a way to fix?
+        # Needed in data parallel is there a way, is there a way to fix?
+        self.rnn.flatten_parameters()
+
         embedding = self.emb(cmd.transpose(0, 1))
         encoding, _ = self.rnn(embedding)
         encoding = self.proj(encoding)
-        lookups = self.lookups(encoding.mean(dim=0)).view(-1, self.n_steps, self.n_latent)
+        lookups = self.lookups(encoding.mean(dim=0)).view(-1,
+                                                          self.n_steps,
+                                                          self.n_latent)
+
+        batch_size = cmd.shape[0]
 
         if self.vae is not None:
             if prior:
-                init, z = self.vae.sample(B=cmd.shape[0])
+                init, _ = self.vae.sample(B=batch_size)
                 kl_loss = .0
             else:
-                mu, logvar = self.vae.encode(img)
-                z = self.vae.reparameterize(mu, logvar)
-                kl_div = self.vae.kl_div(mu, logvar)
-                init = self.vae.decoder(z)
-                kl_loss = self.vae.beta * kl_div
+                kl_loss, init, *_ = self.vae(img, reconstruction_loss=False)
+                # kl_loss *= batch_size
+
         else:
             init = torch.zeros_like(img)
             kl_loss = .0
@@ -168,7 +175,7 @@ class FilterModel(nn.Module):
             old_result = results[-1]
 
             text_attention = (lookups[None, :, i, :] * encoding).sum(dim=2,
-                    keepdim=True)
+                                                                     keepdim=True)
             text_attention = F.gumbel_softmax(text_attention, hard=False, dim=0)
 
             # text_attention = torch.zeros_like(text_attention)
@@ -178,7 +185,7 @@ class FilterModel(nn.Module):
             enc_attended = (encoding * text_attention).sum(dim=0)
             emb_attended = (embedding * text_attention).sum(dim=0)
 
-            att_features = self.att_featurizers[i](old_result)
+            att_features = self.att_featurizers(old_result)
             # logging.info(f"att_features before permute: {att_features.shape}")
             # att_features = att_features.permute(0, 2, 3, 1)
             # logging.info(f"att_features after permute: {att_features.shape}")
@@ -190,19 +197,27 @@ class FilterModel(nn.Module):
             # att_map = torch.sigmoid(att_map).permute(0, 3, 1, 2)
 
             transformed = self.filter(old_result, emb_attended)
-            new_result = att_map * transformed + (1 - att_map) * old_result
+            new_result = (att_map + EPS) * transformed + (1 - att_map + EPS) * old_result
             attentions.append(att_map)
             if test:
                 text_attentions.append(text_attention.transpose(0, 1))
             results.append(new_result)
 
-        pred_loss = self.loss(results[-1], img).div(init.shape[0])
-        att_loss = torch.stack(attentions).sum().div(init.shape[0])
-        scalars = {'pred_loss': pred_loss,
-                   'att_loss': att_loss,
-                   'kl_loss': torch.tensor(kl_loss, device=pred_loss.device)}
-        loss = pred_loss + 0.0001 * att_loss + kl_loss
+        reconstruction = results[-1]
+
+        pred_loss = self.loss(reconstruction, img)
+        att_loss = torch.stack(attentions).mean()
+
+
+        with torch.no_grad():
+            scalars = {'pred_loss': pred_loss / batch_size,
+                       'att_loss': att_loss / batch_size,
+                       'kl_loss': torch.tensor(kl_loss / batch_size,
+                                               device=pred_loss.device)}
+
+        loss = (pred_loss + 0.0001 * att_loss + kl_loss)
+
         if test:
-            return loss, scalars, results[-1], results, attentions, text_attentions
+            return loss, scalars, reconstruction, results, attentions, text_attentions
         else:
             return loss, scalars

@@ -86,12 +86,13 @@ class VectorQuantizedVAE(nn.Module):
     def decode(self, z_q_x, cmds=None):
         return self.decoder(z_q_x)
 
-    def forward(self, x, cmds=None):
+    def forward(self, x, cmds=None, reconstruction_loss=True):
         z_q_x, latents, loss, nll = self.encode(x, cmds)
         x_tilde = self.decode(z_q_x, cmds)
-        recon_error = F.mse_loss(x_tilde, x)
-        loss += recon_error
-        return loss, x_tilde, recon_error * math.prod(x.shape), nll, z_q_x, latents
+        reconstruction_error = F.mse_loss(x_tilde, x, reduction='sum')
+        if reconstruction_loss:
+            loss += (reconstruction_error / math.prod(x.shape))
+        return loss, x_tilde, reconstruction_error, nll, z_q_x, latents
 
     def _log_prob(self, dist, z):
         return dist.log_prob(z).sum((1, 2, 3))
@@ -104,7 +105,7 @@ class VectorQuantizedVAE(nn.Module):
         z_q_x, latents, loss, nll = self.encode(x, cmds)
         x_tilde = self.decode(z_q_x, cmds)
         pxz = Normal(x_tilde, torch.ones_like(x_tilde))
-        return -self._log_prob(pxz,x).sum() + nll # this is single sample estimate, so it's lower bound
+        return -self._log_prob(pxz, x).sum() + nll # this is single sample estimate, so it's lower bound
 
 
 class ResBlock(nn.Module):
@@ -159,40 +160,33 @@ class VectorQuantizerEMA(nn.Module):
         # Encoding
         encoding_indices = torch.argmin(distances, dim=1)
         encodings = encoding_indices.view(input_shape[0:3])
-        # Quantize and unflatten
+        quantized = self._embedding(encodings)
+        # Inefficient version of the above after materializing one hot embeddings:
         # quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
+
+        # Language supervision
         if cmds is not None and self.cmdproc:
-            ###
-            dists = distances.view(input_shape[0], input_shape[1] * input_shape[2], self._num_embeddings)  # [B, HW, n_codes]
-            num_objs = torch.count_nonzero(cmds, dim=0)  # B
-            cmd_loss = 0.
-            for (k, inst) in enumerate(dists.split(1, dim=0)):  #
-                regions = inst.squeeze(0).chunk(num_objs[k], dim=0)
-                for (j, region) in enumerate(regions):
-                    cmd_loss += region[:, cmds[j, k]].mean()
-            cmd_loss = 0.01 * (cmd_loss / input_shape[0])
+            cmd_loss = self.command_loss(cmds, distances, input_shape)
         else:
             cmd_loss = 0
 
-        quantized = self._embedding(encodings)
-        #
         # # Use EMA to update the embedding vectors
-        # if self.training:
-        #     one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
-        #     one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
-        #     self._ema_cluster_size = self._ema_cluster_size * self._decay + \
-        #                              (1 - self._decay) * one_hot.sum(dim=0)
-        #
-        #     # Laplace smoothing of the cluster size
-        #     n = torch.sum(self._ema_cluster_size.data)
-        #     self._ema_cluster_size = (
-        #         (self._ema_cluster_size + self._epsilon)
-        #         / (n + self._num_embeddings * self._epsilon) * n)
-        #
-        #     dw = one_hot.t() @ flatten
-        #     self._ema_w.data = self._ema_w * self._decay + (1 - self._decay) * dw
-        #
-        #     self._embedding.weight.data = self._ema_w / self._ema_cluster_size.unsqueeze(1)
+        if self.training:
+            one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
+            one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
+            self._ema_cluster_size = self._ema_cluster_size * self._decay + \
+                                     (1 - self._decay) * one_hot.sum(dim=0)
+
+            # Laplace smoothing of the cluster size
+            n = torch.sum(self._ema_cluster_size.data)
+            self._ema_cluster_size = (
+                (self._ema_cluster_size + self._epsilon)
+                / (n + self._num_embeddings * self._epsilon) * n)
+
+            dw = one_hot.t() @ flatten
+            self._ema_w.data = self._ema_w * self._decay + (1 - self._decay) * dw
+
+            self._embedding.weight.data = self._ema_w / self._ema_cluster_size.unsqueeze(1)
 
         # Loss
         e_latent_loss = F.mse_loss(quantized.detach(), inputs)
@@ -211,6 +205,15 @@ class VectorQuantizerEMA(nn.Module):
         quantized = quantized.permute(0, 3, 1, 2).contiguous()
         return quantized, encodings, loss,  nll
 
+    def command_loss(self, cmds, distances, input_shape, lamda=0.01):
+        dists = distances.view(input_shape[0], input_shape[1] * input_shape[2], self._num_embeddings)  # [B, HW, n_codes]
+        num_objs = torch.count_nonzero(cmds, dim=0)  # B
+        loss = 0.
+        for (k, inst) in enumerate(dists.split(1, dim=0)):  #
+            regions = inst.squeeze(0).chunk(num_objs[k], dim=0)
+            for (j, region) in enumerate(regions):
+                loss += region[:, cmds[j, k]].mean()
+        return lamda * (loss / input_shape[0])
 
     def sample(self, B=1, cmd=None):
         encodings = np.random.choice(np.arange(self._num_embeddings), (B, *self._latent_shape[1:]))

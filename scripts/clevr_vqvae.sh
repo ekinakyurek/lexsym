@@ -25,8 +25,8 @@ for n_latent in 8 16 32 64; do
   for n_codes in 16 24; do
     for lr in 0.0003; do
       i=$((i + 1));
-      if [[ $i -eq $SLURM_ARRAY_TASK_ID ]]; then
-        exp_folder="vis/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/logs"
+      if [[ $i -eq $1 ]]; then
+        exp_folder="visv2/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/logs"
         mkdir -p $exp_folder
         PYTHONHASHSEED=${seed} python -u main.py \
         --seed ${seed} \
@@ -37,7 +37,8 @@ for n_latent in 8 16 32 64; do
         --h_dim ${h_dim} \
         --modeltype ${modeltype} \
         --datatype ${datatype} \
-        --lr ${lr} > $exp_folder/eval.out 2> $exp_folder/eval.err
+        --lr ${lr}
+        #> $exp_folder/eval.out 2> $exp_folder/eval.err
       fi
     done
   done

@@ -73,16 +73,13 @@ class CLEVRDataset(object):
                     running_var += ((img - self.mean[:, None, None]) ** 2).mean(dim=(1, 2))
             var = running_var / N
             self.std = torch.sqrt(var)
-            # 
-            # self.std = self.mean / self.mean
-            # self.mean = 0 * self.mean
 
 
-
-            self.transform = transforms.Compose([transforms.ToTensor(),
-                                                transforms.Resize(int(math.ceil(self.size[0]*1.1))),
-                                                transforms.CenterCrop(self.size),
-                                                transforms.Normalize(self.mean, self.std)])
+            self.transform = transforms.Compose(
+                          [transforms.ToTensor(),
+                           transforms.Resize(int(math.ceil(self.size[0]*1.1))),
+                           transforms.CenterCrop(self.size),
+                           transforms.Normalize(self.mean, self.std)])
         else:
             self.mean = transform.transforms[-1].mean
             self.std = transform.transforms[-1].std

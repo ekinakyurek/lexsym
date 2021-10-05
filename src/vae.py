@@ -83,18 +83,33 @@ class VAE(nn.Module):
         mu, logvar = self.encoder(x).chunk(2, dim=-1)
         return mu, logvar
 
-    def forward(self, x, cmd=None, variational=True):
+    def forward(self,
+                x,
+                cmd=None,
+                variational=True,
+                reconstruction_loss=True):
+
         mu, logvar = self.encode(x, cmd)
+
+        B = mu.shape[0]
         if variational:
             z = self.reparameterize(mu, logvar)
             kl_div = self.kl_div(mu, logvar)
         else:
             z = mu
             kl_div = .0
+
         x_tilde = self.decoder(z)
-        loss_recons = (self.noise(x_tilde) - self.noise(x)).pow(2).sum().div(mu.shape[0])
-        loss = loss_recons + self.beta * kl_div
-        return loss, x_tilde, loss_recons*mu.shape[0], kl_div*mu.shape[0]
+        loss = self.beta * kl_div
+
+        if reconstruction_loss:
+            reconstruction_error = (self.noise(x_tilde) - self.noise(x))\
+                                    .pow(2).sum().div(mu.shape[0])
+            loss += reconstruction_error
+        else:
+            reconstruction_error = .0
+
+        return loss, x_tilde, reconstruction_error*B, kl_div*B
 
     def nll(self, x, cmd=None, N=25):
         mu, logvar = self.encode(x, cmd)
