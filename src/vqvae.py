@@ -79,20 +79,29 @@ class VectorQuantizedVAE(nn.Module):
         # return q, e, (l1+l2+l3+l4) / 4, (nll1+nll2+nll3+nll4) / 4
 
     def sample(self, B=1, cmd=None):
-        z_q_x, encodings = self.codebook1.sample(B=B,cmd=cmd)
+        z_q_x, encodings = self.codebook1.sample(B=B, cmd=cmd)
         x_tilde = self.decode(z_q_x)
-        return x_tilde, encodings
+        return x_tilde, z_q_x, encodings  # FIX: convert back to 'encodings'
 
     def decode(self, z_q_x, cmds=None):
         return self.decoder(z_q_x)
 
-    def forward(self, x, cmds=None, reconstruction_loss=True):
+    def forward(self,
+                x,
+                cmds=None,
+                reconstruction_loss=True,
+                return_z=False,
+                ):
         z_q_x, latents, loss, nll = self.encode(x, cmds)
         x_tilde = self.decode(z_q_x, cmds)
         reconstruction_error = F.mse_loss(x_tilde, x, reduction='sum')
         if reconstruction_loss:
             loss += (reconstruction_error / math.prod(x.shape))
-        return loss, x_tilde, reconstruction_error, nll, z_q_x, latents
+
+        if return_z:
+            return z_q_x, loss, x_tilde, reconstruction_error, nll, latents
+        else:
+            return loss, x_tilde, reconstruction_error, nll, z_q_x, latents
 
     def _log_prob(self, dist, z):
         return dist.log_prob(z).sum((1, 2, 3))

@@ -5,6 +5,9 @@ import math
 from absl import logging
 from . import vae
 from .vqvae import VectorQuantizedVAE
+from .utils import reset_parameters
+from .utils import weights_init
+from .utils import conv3x3
 
 EPS = 1e-5
 
@@ -100,83 +103,142 @@ class ImageFilter(nn.Module):
         self.upsample_layers = nn.ModuleList(upsample_layers)
         self.downsample_projections = nn.ModuleList(downsample_projections)
         self.upsample_projections = nn.ModuleList(upsample_projections)
+        self.dropout = nn.Dropout(0.3)
 
     def forward(self, img, embedding):
         features = img
         for i in range(len(self.downsample_layers)):
-            features = features + self.downsample_projections[i](embedding)[..., None, None]
+            features = self.dropout(features) + self.downsample_projections[i](embedding)[..., None, None]
             features = self.downsample_layers[i](features)
 
         for i in range(len(self.upsample_layers)):
-            features = features + self.upsample_projections[i](embedding)[..., None, None]
+            features = self.dropout(features) + self.upsample_projections[i](embedding)[..., None, None]
             features = self.upsample_layers[i](features)
 
         return features
 
 class FilterModel(nn.Module):
-    def __init__(self, vocab, n_downsample, n_latent, n_steps, vae=None):
+    def __init__(self,
+                 vocab,
+                 n_downsample,
+                 n_latent,
+                 n_steps,
+                 att_loss_weight=0.0001,
+                 vae=None,
+                 text_conditional=False,
+                 append_z=False):
+
         super().__init__()
 
         self.vocab = vocab
         self.n_latent = n_latent
         self.n_steps = n_steps
-        self.h_dim = 128
+        self.h_dim = 2 * n_latent
+        self.att_loss_weight = att_loss_weight
+        self.vae = vae
+        self.text_conditional = text_conditional
+        self.append_z = append_z
+        self.filter_embed_dim = self.h_dim
+        if vae is not None and text_conditional:
+            self.cond_emb = nn.Linear(n_latent,
+                                      math.prod(self.vae.latent_shape))
 
-        self.emb = nn.Embedding(len(vocab), self.h_dim)
-        self.rnn = nn.LSTM(self.h_dim, n_latent, 1, bidirectional=False)
-        self.proj = nn.Linear(n_latent, n_latent)
+            if append_z:
+                self.vae_proj = nn.Linear(math.prod(self.vae.latent_shape),
+                                          n_latent)
+                self.filter_embed_dim = self.h_dim + n_latent
+
+        self.emb = nn.Embedding(len(vocab), self.h_dim, padding_idx=vocab.pad())
+
+        self.rnn = nn.LSTM(self.h_dim, self.h_dim, 1, bidirectional=False)
+
+        self.proj = nn.Linear(self.h_dim, n_latent)
 
         self.lookups = nn.Linear(n_latent, n_steps * n_latent)
 
-        self.att_featurizers = nn.Sequential(
+        self.att_featurizers = nn.ModuleList([nn.Sequential(
             nn.ReplicationPad2d(2),
             nn.Conv2d(3, n_latent, 5, 1),
             nn.LeakyReLU(0.2),
             Positional(),
             nn.Conv2d(n_latent, n_latent, 1, 1),
             nn.LeakyReLU(0.2),
-        )
+        ) for i in range(n_steps)])
 
-        self.filter = ImageFilter(n_downsample, n_latent, self.h_dim)
+        self.filter = ImageFilter(n_downsample, n_latent, self.filter_embed_dim)
 
-        self.vae = vae
-        self.loss = nn.MSELoss(reduction='mean')
+        self.loss = nn.MSELoss(reduction='sum')
 
-    def forward(self, cmd, img, test=False, prior=False):
+        self.dropout = nn.Dropout(0.3)
+
+        self.apply(weights_init)
+
+    def reset_decoder_parameters(self):
+        if self.vae is not None:
+            self.vae.reset_decoder_parameters()
+        self.filter.apply(reset_parameters)
+        self.rnn.reset_parameters()
+        self.att_featurizers.apply(reset_parameters)
+        self.proj.reset_parameters()
+        self.lookups.reset_parameters()
+        self.emb.reset_parameters()
+
+
+    def forward(self, cmd, img, test=False, prior=False, variational=True):
         # Needed in data parallel is there a way, is there a way to fix?
         self.rnn.flatten_parameters()
 
         embedding = self.emb(cmd.transpose(0, 1))
         encoding, _ = self.rnn(embedding)
-        encoding = self.proj(encoding)
-        lookups = self.lookups(encoding.mean(dim=0)).view(-1,
-                                                          self.n_steps,
-                                                          self.n_latent)
+        encoding = self.proj(self.dropout(encoding))
 
         batch_size = cmd.shape[0]
 
         if self.vae is not None:
+            if self.text_conditional:
+                # sum over sequence dimension
+                z_bias = self.cond_emb(encoding.sum(dim=0))
+            else:
+                z_bias = None
+
             if prior:
-                init, _ = self.vae.sample(B=batch_size)
+                init, z = self.vae.sample(B=batch_size, z_bias=z_bias)
                 kl_loss = .0
             else:
-                kl_loss, init, *_ = self.vae(img, reconstruction_loss=False)
-                # kl_loss *= batch_size
+                z, kl_loss, init, *_ = self.vae(img,
+                                                variational=variational,
+                                                reconstruction_loss=False,
+                                                z_bias=z_bias,
+                                                return_z=True)
+                kl_loss *= batch_size
 
+            if self.append_z:
+                z = self.vae_proj(z).unsqueeze(0).expand(embedding.shape[0], -1, -1)
+                embedding = torch.cat((embedding, z), dim=-1)
+                # encoding = torch.cat((encoding, z)), dim=-1)
+            else:
+                del z
         else:
             init = torch.zeros_like(img)
             kl_loss = .0
 
+        lookups = self.lookups(encoding.mean(dim=0)).view(-1,
+                                                          self.n_steps,
+                                                          self.n_latent)
+
+
         results = []
         attentions = []
         text_attentions = []
+        init = init.mean(dim=1, keepdim=True).expand(-1, 3, -1, -1)
         results.append(init)
         for i in range(self.n_steps):
             old_result = results[-1]
 
             text_attention = (lookups[None, :, i, :] * encoding).sum(dim=2,
                                                                      keepdim=True)
-            text_attention = F.gumbel_softmax(text_attention, hard=False, dim=0)
+
+            text_attention = F.gumbel_softmax(text_attention, tau=0.2, hard=False, dim=0)
 
             # text_attention = torch.zeros_like(text_attention)
             # i_attend = 1 if i < self.n_steps // 2 else 0
@@ -185,28 +247,24 @@ class FilterModel(nn.Module):
             enc_attended = (encoding * text_attention).sum(dim=0)
             emb_attended = (embedding * text_attention).sum(dim=0)
 
-            att_features = self.att_featurizers(old_result)
-            # logging.info(f"att_features before permute: {att_features.shape}")
-            # att_features = att_features.permute(0, 2, 3, 1)
-            # logging.info(f"att_features after permute: {att_features.shape}")
-            # logging.info(f"enc_attended: {enc_attended.shape}")
+            att_features = self.att_featurizers[i](old_result)
+
             att_map = torch.einsum('bchw,bc->bhw', att_features, enc_attended)
             att_map = torch.sigmoid(att_map).unsqueeze(dim=1)
-            # att_map = (enc_attended[:, None, None, :] * att_features).sum(dim=3, keepdim=True)
-
-            # att_map = torch.sigmoid(att_map).permute(0, 3, 1, 2)
-
             transformed = self.filter(old_result, emb_attended)
+
             new_result = (att_map + EPS) * transformed + (1 - att_map + EPS) * old_result
             attentions.append(att_map)
+
             if test:
                 text_attentions.append(text_attention.transpose(0, 1))
+
             results.append(new_result)
 
         reconstruction = results[-1]
 
         pred_loss = self.loss(reconstruction, img)
-        att_loss = torch.stack(attentions).mean()
+        att_loss = torch.stack(attentions).sum()
 
 
         with torch.no_grad():
@@ -215,7 +273,7 @@ class FilterModel(nn.Module):
                        'kl_loss': torch.tensor(kl_loss / batch_size,
                                                device=pred_loss.device)}
 
-        loss = (pred_loss + 0.0001 * att_loss + kl_loss)
+        loss = (pred_loss + self.att_loss_weight * att_loss + kl_loss) / batch_size
 
         if test:
             return loss, scalars, reconstruction, results, attentions, text_attentions

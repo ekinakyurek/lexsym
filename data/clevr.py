@@ -13,7 +13,14 @@ from absl import logging
 
 
 class CLEVRDataset(object):
-    def __init__(self, root="data/clevr/", split="trainA", transform=None, vocab=None, color="RGB", size=(128, 128)):
+    def __init__(self,
+                 root="data/clevr/",
+                 split="trainA",
+                 transform=None,
+                 vocab=None,
+                 color="RGB",
+                 size=(128, 168)):
+
         self.root = root
         self.split = split
         self.color = color
@@ -21,9 +28,9 @@ class CLEVRDataset(object):
 
         with open(os.path.join(self.root, "scenes", f"CLEVR_{split}_scenes.json")) as reader:
             self.annotations = json.load(reader)["scenes"]
-
-        self.annotations = list(filter(lambda a: len(a['objects']) < 5,
-                                  self.annotations))
+        #
+        # self.annotations = list(filter(lambda a: len(a['objects']) < 5,
+        #                           self.annotations))
 
         # with open(self.root+"splits.json") as reader:
         #      self.annotations = [self.annotations[i] for i in json.load(reader)[self.split]]
@@ -55,8 +62,7 @@ class CLEVRDataset(object):
 
         if transform is None:
             T = transforms.Compose([transforms.ToTensor(),
-                                    transforms.Resize(int(math.ceil(self.size[0]*1.1))),
-                                    transforms.CenterCrop(self.size),
+                                    transforms.Resize(size),
                                     ])
             running_mean = torch.zeros(3, dtype=torch.float32)
             N = min(250, len(self.annotations))
@@ -77,8 +83,7 @@ class CLEVRDataset(object):
 
             self.transform = transforms.Compose(
                           [transforms.ToTensor(),
-                           transforms.Resize(int(math.ceil(self.size[0]*1.1))),
-                           transforms.CenterCrop(self.size),
+                           transforms.Resize(size),
                            transforms.Normalize(self.mean, self.std)])
         else:
             self.mean = transform.transforms[-1].mean

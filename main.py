@@ -1,6 +1,7 @@
 import os
 import random
 import json
+import sys
 import itertools
 import functools
 import warnings
@@ -61,8 +62,17 @@ flags.DEFINE_integer('lex_n_steps', default=10,
 flags.DEFINE_integer('lex_n_downsample', default=2,
                      help="Number of downsampling layers in lexical model")
 
+flags.DEFINE_float('lex_att_loss_weight', default=0.0001,
+                   help="Attention loss weight in lexical model")
+
 flags.DEFINE_string('lex_vae_type', default='VAE',
                     help="VAE type for lexical model among VAE, VQVAE, None")
+
+flags.DEFINE_bool('lex_text_conditional', default=False,
+                  help="Determines VAE or CVAE for lexical model")
+
+flags.DEFINE_bool('lex_append_z', default=False,
+                  help="Appends z to encodings and embeddings")
 
 flags.DEFINE_integer('n_batch', default=128,
                      help='Minibatch size to train.')
@@ -98,6 +108,9 @@ flags.DEFINE_string('datatype', default='setpp',
 
 flags.DEFINE_string("modeltype", default='VQVAE',
                     help='VAE, VQVAE, TODO: fix this flag for filter model')
+
+flags.DEFINE_string("vis_root", default='vis',
+                    help='root folder for visualization and logs.')
 
 flags.DEFINE_float('decay', default=0.99,
                    help='set learning rate value for optimizers')
@@ -172,15 +185,22 @@ flags.DEFINE_bool('multiprocessing_distributed', False,
 flags.DEFINE_string('tensorboard', default=None,
                     help='Use tensorboard for logging losses.')
 
+flags.DEFINE_bool('kl_anneal', default=False,
+                  help='Enables kl annealing.')
+
+flags.DEFINE_integer('decoder_reset', default=-1,
+                     help='Enables decoder reset for vae to prevent posterior collapse.')
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def save_checkpoint(state, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
 
+
 def train_filter_model(model,
                        train,
                        test,
-                       optimizer,
                        vis_folder,
                        visualize_every=10,
                        n_batch=64,
@@ -189,9 +209,16 @@ def train_filter_model(model,
                        distributed=False,
                        ngpus_per_node=1,
                        gpu=0,
-                       rank=0):
+                       rank=0,
+                       kl_anneal=False,
+                       decoder_reset=-1,
+                       lr=0.0001,
+                       ):
+
+    optimizer = optim.Adam(model.parameters(), lr=lr)
 
     main_worker = rank % ngpus_per_node == 0
+    logging.info(ngpus_per_node)
 
     if distributed:
         train_sampler = DistributedSampler(train)
@@ -211,50 +238,98 @@ def train_filter_model(model,
 
     total_steps = 0
 
-    # if model.module.vae is not None:
-    #     target_beta = model.module.vae.beta
-    #     model.module.vae.beta = 0.0
-    #     kl_rate = 2*(target_beta / ((len(train) * epoch) / n_batch))
-    #     print(f"kl rate: {kl_rate}")
+    if hasattr(model, 'module'):
+        model_object = model.module
+    else:
+        model_oject = model
+
+    if model_object.vae is not None:
+        variational = True
+        if kl_anneal:
+            target_beta = model_object.vae.beta
+            model_object.vae.beta = 0.0
+            kl_rate = 4*(target_beta / (epoch))
+            logging.info(f"kl rate: {kl_rate}")
+        if decoder_reset != -1:
+            variational = False
 
     for i in range(epoch):
+
         if train_sampler:
             train_sampler.set_epoch(i)
-        total_loss = .0
-        total_item = .0
-        tloader = tqdm(loader) if main_worker else loader
+
+        total_loss, total_item = .0, .0
+
+        dloader = tqdm(loader) if main_worker else loader
+
         model.train()
-        for (cmd, img, _) in tloader:
+
+        for (cmd, img, _) in dloader:
             cmd = cmd.transpose(0, 1)
+
             if gpu is not None:
                 cmd = cmd.cuda(gpu, non_blocking=True)
                 img = img.cuda(gpu, non_blocking=True)
-            loss, scalars = model(cmd, img, test=False)
+
+            loss, scalars = model(cmd,
+                                  img,
+                                  test=False,
+                                  variational=variational)
             loss = loss.mean()
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
+
             total_steps += 1
-            # if hasattr(model, 'vae'):
-            #     model.module.vae.beta = min(model.module.vae.beta + kl_rate, target_beta)
             total_loss += loss.item()
             total_item += img.shape[0]
+
             if main_worker:
-                tloader.set_description(
-                 f"Epoch {i}, Avg Loss (Train): %.4f, N: %d" %
-                 (total_loss/total_item, total_item))
+                dloader.set_description(
+                                 f"Epoch {i}, Avg Loss (Train): %.4f, N: %d" %
+                                 (total_loss/total_item, total_item))
+
                 if hasattr(logging, 'tb_writer'):
-                    scalars = dict((k, v.mean().item()) for (k, v) in scalars.items())
-                    logging.tb_writer.add_scalars('Train/Loss', scalars, total_steps)
-        if main_worker and (i+1) % visualize_every == 0:
+                    scalars = dict((k, v.mean().item())
+                                   for (k, v) in scalars.items())
+                    logging.tb_writer.add_scalars('Train/Loss', scalars,
+                                                  total_steps)
+                    logging.tb_writer.add_scalar('beta', model_object.vae.beta,
+                                                 total_steps)
+
+        if not distributed and not variational and i == decoder_reset:
+            model = model_object
+            model.cpu()
+            model.reset_decoder_parameters()
+            logging.info("Resetting model decoder...")
+            if ngpus_per_node > 0:
+                model = torch.nn.DataParallel(model).cuda()
+                model_object = model.module
+            else:
+                model.cuda()
+                model_object = model
+            optimizer = optim.Adam(model.parameters(), lr=lr)
+            variational = True
+
+        if model_object.vae is not None and kl_anneal and variational:
+            model_object.vae.beta = min(model_object.vae.beta + kl_rate,
+                                        target_beta)
+
+        if main_worker and ((i+1) % visualize_every == 0 or i == 0):
             logging.info(f"Epoch {i} (Train): %.4f", total_loss / total_item)
             model.eval()
+            annotations = train.annotations
+            reannotations = [{'desc': a['desc'].replace('blue', 'red').replace('yellow', 'green'),
+                              'image': a['image']} for a in annotations]
+            train.annotations = reannotations
             train_vis = visualize_filter_preds(model,
                                                train,
                                                vis_folder,
                                                prefix=f"train-{i}",
                                                gpu=gpu)
 
+            train.annotations = annotations
             test_vis = visualize_filter_preds(model,
                                               test,
                                               vis_folder,
@@ -475,7 +550,10 @@ def filter_model(gpu, ngpus_per_node, args):
         n_downsample=args.lex_n_downsample,
         n_latent=args.lex_n_latent,
         n_steps=args.lex_n_steps,
+        att_loss_weight=args.lex_att_loss_weight,
         vae=vae,
+        text_conditional=args.lex_text_conditional,
+        append_z=args.lex_append_z,
     )
 
     if args.distributed:
@@ -504,12 +582,10 @@ def filter_model(gpu, ngpus_per_node, args):
         print('using data parallel')
         model = torch.nn.DataParallel(model).cuda()
 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     train_filter_model(model,
                        train,
                        test,
-                       optimizer,
                        vis_folder,
                        visualize_every=args.visualize_every,
                        n_batch=args.n_batch,
@@ -518,7 +594,10 @@ def filter_model(gpu, ngpus_per_node, args):
                        distributed=args.distributed,
                        ngpus_per_node=ngpus_per_node,
                        gpu=args.gpu,
-                       rank=args.rank)
+                       rank=args.rank,
+                       lr=args.lr,
+                       kl_anneal=args.kl_anneal,
+                       decoder_reset=args.decoder_reset)
     if args.distributed:
         utils.cleanup()
 
@@ -678,6 +757,7 @@ def train_cvae():
     vis_folder = flags_to_path()
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)
+
     if FLAGS.test:
         model = torch.load(FLAGS.model_path)
         model = model.to(device)
@@ -947,7 +1027,7 @@ def img2code():
 
 
 def flags_to_path():
-    root = os.path.join("visv2", FLAGS.datatype, FLAGS.modeltype)
+    root = os.path.join(FLAGS.vis_root, FLAGS.datatype, FLAGS.modeltype)
 
     if "VQVAE" in FLAGS.modeltype:
         path = os.path.join(root,
@@ -972,8 +1052,14 @@ def flags_to_path():
 def main(_):
     if FLAGS.tensorboard:
         from torch.utils.tensorboard import SummaryWriter
-        logging.tb_writer = SummaryWriter(log_dir=FLAGS.tensorboard,
-                                 comment=f'{FLAGS.datatype}/{FLAGS.modeltype}')
+        logging.tb_writer = SummaryWriter(os.path.join(FLAGS.tensorboard,
+                                                       FLAGS.datatype,
+                                                       FLAGS.modeltype,
+                                                       (f"dim_{FLAGS.n_latent}_"
+                                                        f"lr_{FLAGS.lr}_"
+                                                        f"beta_{FLAGS.beta}")
+                                                       ))
+
     if FLAGS.rank == 0:
         logging._absl_handler.setFormatter(logging.logging.Formatter(
                     '%(asctime)s [%(filename)s:%(lineno)d] %(message)s', "%H:%M:%S"))
@@ -993,19 +1079,23 @@ def main(_):
 
         ngpus_per_node = torch.cuda.device_count()
 
-        if FLAGS.multiprocessing_distributed:
+        args = utils.ConfigDict(dict((item.name, item.value)
+                      for item in FLAGS.get_key_flags_for_module(sys.argv[0])))
+
+        logging.tb_writer.add_text("FLAGS", json.dumps(args._initial_dict, indent=2).replace("\n", "   \n"))
+
+        if args.multiprocessing_distributed:
             # Since we have ngpus_per_node processes per node, the total world_size
             # needs to be adjusted accordingly
-            FLAGS.world_size = ngpus_per_node * FLAGS.world_size
+            args.world_size = ngpus_per_node * args.world_size
             # Use torch.multiprocessing.spawn to launch distributed processes: the
             # main_worker process function
-            args = utils.ConfigDict(
-                              {k: v.value for (k, v) in FLAGS.__flags.items()})
-
-            torch.multiprocessing.spawn(filter_model, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+            torch.multiprocessing.spawn(filter_model,
+                                        nprocs=ngpus_per_node,
+                                        args=(ngpus_per_node, args))
         else:
             # Simply call main_worker function
-            filter_model(FLAGS.gpu, ngpus_per_node, FLAGS)
+            filter_model(FLAGS.gpu, ngpus_per_node, args)
     elif FLAGS.extract_codes:
         img2code()
     elif FLAGS.modeltype.startswith("C"):

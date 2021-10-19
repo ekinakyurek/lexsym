@@ -16,11 +16,24 @@ def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
         try:
-            nn.init.normal_(m.weight.data, std=0.02)
+            nn.init.normal_(m.weight.data, std=0.002)
             m.bias.data.fill_(0)
         except AttributeError:
             print("Skipping initialization of ", classname)
 
+
+def reset_parameters(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        try:
+            nn.init.normal_(m.weight.data, std=0.002)
+            m.bias.data.fill_(0)
+        except AttributeError:
+            print("Skipping initialization of ", classname)
+    elif classname.find('Linear') != -1:
+        m.reset_parameters()
+    elif classname.find('Embedding') != -1:
+        m.reset_parameters()
 
 class View(nn.Module):
     def __init__(self, *shape):
@@ -29,6 +42,20 @@ class View(nn.Module):
 
     def forward(self, x):
         return x.view(*self.shape)
+
+class Residual(nn.Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def forward(self, x):
+        return self.fn(x)
+
+
+def conv3x3(input_dim, output_dim, kernel_dim=3):
+    return Residual(nn.Sequential(
+                nn.Conv2d(input_dim, output_dim, kernel_dim, padding="same"),
+                nn.LeakyReLU(0.2)))
 
 
 class PositionalEncoding(nn.Module):
@@ -166,5 +193,6 @@ def worker_init_fn(worker_id, rank=0):
 
 class ConfigDict(object):
     def __init__(self, my_dict):
+        self._initial_dict = my_dict
         for key in my_dict:
             setattr(self, key, my_dict[key])
