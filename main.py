@@ -362,12 +362,12 @@ def visualize_filter_preds(model,
 
     test_loader = DataLoader(test,
                              batch_size=n_eval,
-                             shuffle=False,
+                             shuffle=True,
                              pin_memory=True,
                              collate_fn=test.collate)
 
     visualizations = []
-    cmd, img, _ = next(iter(test_loader))
+    cmd, img, img_files = next(iter(test_loader))
     cmd = cmd.transpose(0, 1)
     if gpu is not None:
         cmd = cmd.cuda(gpu, non_blocking=True)
@@ -380,6 +380,7 @@ def visualize_filter_preds(model,
         visualizations.append(visualize(
             test,
             f"{prefix}-{j}",
+            img_files[j],
             test.decode(cmd[j, :]),
             results,
             attentions,
@@ -391,6 +392,7 @@ def visualize_filter_preds(model,
 
 def visualize(dataset,
               name,
+              original,
               command,
               results,
               attentions,
@@ -418,18 +420,22 @@ def visualize(dataset,
     imageio.imwrite(os.path.join(vis_folder, name + ".result-0.png"),
                     imprep(results[0][j, ...]))
 
+    shutil.copyfile(original, os.path.join(vis_folder, name + ".original.png"))
+
     example = {
         "name": name,
         "command": command,
+        "original": name + ".original.png",
         "init-result": name + ".result-0.png",
         "attentions": [],
         "text_attentions": [],
         "results": [],
     }
+
     for i in range(1, len(results)):
         example["attentions"].append(name + f".att-{i}.png")
         t_att = text_attentions[i-1][j, :].numpy().ravel().tolist()
-        t_att = " | ".join([f"{a:.1f}" for a in t_att])
+        # t_att = " | ".join([f"{a:.1f}" for a in t_att])
         example["text_attentions"].append(t_att)
         example["results"].append(name + f".result-{i}.png")
         imageio.imwrite(os.path.join(vis_folder, name + f".att-{i}.png"),
@@ -462,13 +468,20 @@ def render_html(visualizations, vis_folder):
         writer = functools.partial(print, file=writer)
         writer(prefix)
         for vis in visualizations:
-            writer("<p>", vis["name"], vis["command"], "</p>")
+            command = vis["command"]
+            writer("<p>", vis["name"], command, "</p>")
+            writer("<p>",
+                   "<img class='hovering' src='",
+                   vis['original'],
+                   "'>", "</p>")
             writer("<table>")
             init = vis["init-result"]
             writer(f"<tr><td></td><td><img class='hovering' src='{init}'></td></tr>")
             for att, result, t_att in zip(vis["attentions"],
                                           vis["results"],
                                           vis["text_attentions"]):
+                t_att = [f"{score:.1f} ({t}-{command[t]})" for (t, score) in enumerate(t_att) if score >= 0.1]
+                t_att = " | ".join(t_att)
                 writer(f"<tr><td><img class='hovering' src='{att}'></td><td><img class='hovering' src='{result}'></td><td>{t_att}</td></tr>")
             writer("</table>")
             writer("<br>")

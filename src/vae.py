@@ -19,6 +19,8 @@ class VAE(nn.Module):
         self.beta = beta
         self.zdim = z_dim
         self.size = size
+        self.dim = dim
+
         if noise is not None:
             self.noise = noise
         else:
@@ -70,7 +72,7 @@ class VAE(nn.Module):
             conv3x3(2*dim, 2*dim),
             nn.ConvTranspose2d(2*dim, dim, 4, 2, 1),
             nn.LeakyReLU(0.2),
-            nn.ConvTranspose2d(dim, input_dim, 4, 2, padding=(1, 1)),
+            nn.ConvTranspose2d(dim, input_dim, 4, 2, padding=1),
         )
 
         self.apply(weights_init)

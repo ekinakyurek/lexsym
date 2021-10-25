@@ -8,20 +8,20 @@
 #SBATCH --tasks-per-node=1
 #SBATCH --array=1-45
 
-n_batch=448
+n_batch=364
 n_epoch=100
 seed=0
 modeltype=FilterModel
 datatype=clevr
-lex_n_latent=64
+lex_n_latent=128
 lex_vae_type='VAE'
-
+nsteps=8
 i=0
 
 for lr in 0.0005; do
  for beta in 1.0; do
     for n_latent in 16; do
-	         h_dim=24   # 2*$n_latent
+	         h_dim=32   # 2*$n_latent
 		     i=$((i + 1));
 	         # if [[ $i -eq $1 ]]; then
           	     exp_folder="vis/${datatype}/${modeltype}/${lex_vae_type}/dim_${n_latent}_lr_${lr}_beta_${beta}"
@@ -33,6 +33,7 @@ for lr in 0.0005; do
                                    --lex_n_latent ${lex_n_latent} \
                                    --lex_vae_type ${lex_vae_type} \
                                    --lex_text_conditional \
+                                   --lex_n_steps ${nsteps} \
                                    --h_dim ${h_dim} \
                                    --n_epoch ${n_epoch} \
                                    --modeltype ${modeltype} \

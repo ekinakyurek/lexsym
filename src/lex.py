@@ -8,6 +8,8 @@ from .vqvae import VectorQuantizedVAE
 from .utils import reset_parameters
 from .utils import weights_init
 from .utils import conv3x3
+from .utils import View
+import numpy as np
 
 EPS = 1e-5
 
@@ -51,8 +53,17 @@ class Positional(nn.Module):
             + self.get_positional_encoding_2d(*x.shape[1:4]).to(x.device)
         )
 
+
 class ImageFilter(nn.Module):
-    def __init__(self, n_downsample, d_latent, d_embed):
+    def __init__(self,
+                 n_downsample,
+                 d_latent,
+                 d_embed,
+                 latent_shape=None,
+                 decoder_dim=None,
+                 vae_z_len=None,
+                 ):
+
         super().__init__()
 
         downsample_layers = []
@@ -103,17 +114,58 @@ class ImageFilter(nn.Module):
         self.upsample_layers = nn.ModuleList(upsample_layers)
         self.downsample_projections = nn.ModuleList(downsample_projections)
         self.upsample_projections = nn.ModuleList(upsample_projections)
-        self.dropout = nn.Dropout(0.3)
 
-    def forward(self, img, embedding):
+        if latent_shape is not None and decoder_dim is not None:
+            self.embed_decoder = self.get_decoder_layer(d_embed,
+                                                        decoder_dim,
+                                                        3,
+                                                        latent_shape,
+                                                        vae_z_len)
+        else:
+            self.embed_decoder = None
+
+        self.dropout = nn.Dropout(0.5)
+        # self.fulldrop = nn.Dropout(0.9)
+
+    def get_decoder_layer(self, d_embed, dim, input_dim, latent_shape, vae_z_len):
+
+        up_proj = nn.Sequential(nn.Linear(d_embed + vae_z_len, np.prod(latent_shape)))
+
+        view = View(-1, *latent_shape)
+
+        return nn.Sequential(
+                    up_proj,
+                    view,
+                    nn.ConvTranspose2d(5*dim, 4*dim, 3, 1, 0),
+                    nn.LeakyReLU(0.2),
+                    nn.ConvTranspose2d(4*dim, 3*dim, 5, 1, 0),
+                    nn.LeakyReLU(0.2),
+                    nn.ConvTranspose2d(3*dim, 2*dim, 4, 2, 1),
+                    nn.LeakyReLU(0.2),
+                    nn.ConvTranspose2d(2*dim, dim, 4, 2, 1),
+                    nn.LeakyReLU(0.2),
+                    nn.ConvTranspose2d(dim, input_dim, 4, 2, 1),
+                )
+        return
+
+    def forward(self, img, embedding, z=None, killz=False):
         features = img
         for i in range(len(self.downsample_layers)):
-            features = self.dropout(features) + self.downsample_projections[i](embedding)[..., None, None]
+            features = self.dropout(features) +\
+             self.downsample_projections[i](embedding)[..., None, None]
             features = self.downsample_layers[i](features)
 
         for i in range(len(self.upsample_layers)):
-            features = self.dropout(features) + self.upsample_projections[i](embedding)[..., None, None]
+            features = self.dropout(features) +\
+             self.upsample_projections[i](embedding)[..., None, None]
             features = self.upsample_layers[i](features)
+
+        if self.embed_decoder is not None:
+            if killz:
+                z = F.dropout(z, p=0.9)
+            else:
+                z = self.dropout(z)
+            features = features + self.embed_decoder(torch.cat((embedding,  self.dropout(z)), dim=-1))
 
         return features
 
@@ -165,11 +217,20 @@ class FilterModel(nn.Module):
             nn.LeakyReLU(0.2),
         ) for i in range(n_steps)])
 
-        self.filter = ImageFilter(n_downsample, n_latent, self.filter_embed_dim)
+        if self.vae is not None:
+            self.filter = ImageFilter(n_downsample,
+                                      n_latent,
+                                      self.filter_embed_dim,
+                                      latent_shape=self.vae.pre_latent_shape,
+                                      vae_z_len=np.prod(self.vae.latent_shape),
+                                      decoder_dim=self.vae.dim)
+        else:
+            self.filter = ImageFilter(n_downsample, n_latent, self.filter_embed_dim)
 
         self.loss = nn.MSELoss(reduction='sum')
 
         self.dropout = nn.Dropout(0.3)
+        self.channeldropout = nn.Dropout2d(0.5, inplace=True)
 
         self.apply(weights_init)
 
@@ -216,8 +277,6 @@ class FilterModel(nn.Module):
                 z = self.vae_proj(z).unsqueeze(0).expand(embedding.shape[0], -1, -1)
                 embedding = torch.cat((embedding, z), dim=-1)
                 # encoding = torch.cat((encoding, z)), dim=-1)
-            else:
-                del z
         else:
             init = torch.zeros_like(img)
             kl_loss = .0
@@ -251,7 +310,7 @@ class FilterModel(nn.Module):
 
             att_map = torch.einsum('bchw,bc->bhw', att_features, enc_attended)
             att_map = torch.sigmoid(att_map).unsqueeze(dim=1)
-            transformed = self.filter(old_result, emb_attended)
+            transformed = self.filter(old_result, emb_attended, z, killz=(i % 2 == 1))
 
             new_result = (att_map + EPS) * transformed + (1 - att_map + EPS) * old_result
             attentions.append(att_map)
