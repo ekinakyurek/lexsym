@@ -327,7 +327,8 @@ def train_filter_model(model,
                                                train,
                                                vis_folder,
                                                prefix=f"train-{i}",
-                                               gpu=gpu)
+                                               gpu=gpu,
+                                               n_eval=10)
 
             train.annotations = annotations
             test_vis = visualize_filter_preds(model,

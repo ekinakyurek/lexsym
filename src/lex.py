@@ -202,7 +202,15 @@ class FilterModel(nn.Module):
 
         self.emb = nn.Embedding(len(vocab), self.h_dim, padding_idx=vocab.pad())
 
-        self.rnn = nn.LSTM(self.h_dim, self.h_dim, 1, bidirectional=False)
+        self.rnn = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(d_model=self.h_dim,
+                                       dim_feedforward=4*self.h_dim,
+                                       nhead=4),
+            num_layers=4)
+
+        self.pos_embed = nn.Parameter(torch.zeros(51, 1 ,self.h_dim))
+
+        # self.rnn = nn.LSTM(self.h_dim, self.h_dim, 1, bidirectional=False)
 
         self.proj = nn.Linear(self.h_dim, n_latent)
 
@@ -230,7 +238,6 @@ class FilterModel(nn.Module):
         self.loss = nn.MSELoss(reduction='sum')
 
         self.dropout = nn.Dropout(0.3)
-        self.channeldropout = nn.Dropout2d(0.5, inplace=True)
 
         self.apply(weights_init)
 
@@ -247,10 +254,11 @@ class FilterModel(nn.Module):
 
     def forward(self, cmd, img, test=False, prior=False, variational=True):
         # Needed in data parallel is there a way, is there a way to fix?
-        self.rnn.flatten_parameters()
-
-        embedding = self.emb(cmd.transpose(0, 1))
-        encoding, _ = self.rnn(embedding)
+        # self.rnn.flatten_parameters()
+        cmd_t = cmd.transpose(0, 1)
+        embedding = self.emb(cmd_t)
+        pos_embed = self.pos_embed[:cmd_t.shape[0], :, :]
+        encoding = self.rnn(embedding + pos_embed)
         encoding = self.proj(self.dropout(encoding))
 
         batch_size = cmd.shape[0]
