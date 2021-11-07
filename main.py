@@ -191,6 +191,9 @@ flags.DEFINE_bool('kl_anneal', default=False,
 flags.DEFINE_integer('decoder_reset', default=-1,
                      help='Enables decoder reset for vae to prevent posterior collapse.')
 
+flags.DEFINE_string("resume", default='',
+                    help='Path to the main model to resume training')
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -202,6 +205,8 @@ def train_filter_model(model,
                        train,
                        test,
                        vis_folder,
+                       optimizer=None,
+                       start_epoch=0,
                        visualize_every=10,
                        n_batch=64,
                        epoch=1,
@@ -215,7 +220,8 @@ def train_filter_model(model,
                        lr=0.0001,
                        ):
 
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    if optimizer is None:
+        optimizer = optim.Adam(model.parameters(), lr=lr)
 
     main_worker = rank % ngpus_per_node == 0
     logging.info(ngpus_per_node)
@@ -241,7 +247,7 @@ def train_filter_model(model,
     if hasattr(model, 'module'):
         model_object = model.module
     else:
-        model_oject = model
+        model_object = model
 
     if model_object.vae is not None:
         variational = True
@@ -253,7 +259,7 @@ def train_filter_model(model,
         if decoder_reset != -1:
             variational = False
 
-    for i in range(epoch):
+    for i in range(start_epoch, epoch):
 
         if train_sampler:
             train_sampler.set_epoch(i)
@@ -271,10 +277,7 @@ def train_filter_model(model,
                 cmd = cmd.cuda(gpu, non_blocking=True)
                 img = img.cuda(gpu, non_blocking=True)
 
-            loss, scalars = model(cmd,
-                                  img,
-                                  test=False,
-                                  variational=variational)
+            loss, scalars = model(**dict(cmd=cmd, img=img, test=False, variational=variational))
             loss = loss.mean()
             optimizer.zero_grad()
             loss.backward()
@@ -320,7 +323,7 @@ def train_filter_model(model,
             logging.info(f"Epoch {i} (Train): %.4f", total_loss / total_item)
             model.eval()
             annotations = train.annotations
-            reannotations = [{'desc': a['desc'].replace('blue', 'red').replace('yellow', 'green'),
+            reannotations = [{'text': a['text'].replace('blue', 'green'),
                               'image': a['image']} for a in annotations]
             train.annotations = reannotations
             train_vis = visualize_filter_preds(model,
@@ -596,11 +599,34 @@ def filter_model(gpu, ngpus_per_node, args):
         print('using data parallel')
         model = torch.nn.DataParallel(model).cuda()
 
+    args.start_epoch = 0
+    optimizer = None
+
+    if args.resume != '':
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        if os.path.isfile(args.resume):
+            print("=> loading checkpoint '{}'".format(args.resume))
+            if args.gpu is None:
+                checkpoint = torch.load(args.resume)
+            else:
+                # Map model to be loaded to specified single gpu.
+                loc = 'cuda:{}'.format(args.gpu)
+                checkpoint = torch.load(args.resume, map_location=loc)
+            args.start_epoch = checkpoint['epoch']
+            model.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, checkpoint['epoch']))
+            del checkpoint
+        else:
+            print("=> no checkpoint found at '{}'".format(args.resume))
 
     train_filter_model(model,
                        train,
                        test,
                        vis_folder,
+                       optimizer=optimizer,
+                       start_epoch=args.start_epoch,
                        visualize_every=args.visualize_every,
                        n_batch=args.n_batch,
                        epoch=args.n_epoch,

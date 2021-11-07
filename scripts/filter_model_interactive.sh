@@ -8,18 +8,18 @@
 #SBATCH --tasks-per-node=1
 #SBATCH --array=1-45
 
-n_batch=364
-n_epoch=100
+n_batch=288
+n_epoch=200
 seed=0
 modeltype=FilterModel
 datatype=clevr
 lex_n_latent=128
 lex_vae_type='VAE'
-nsteps=8
+nsteps=10
 i=0
 
 for lr in 0.0005; do
- for beta in 1.0; do
+ for beta in 0.5; do
     for n_latent in 16; do
 	         h_dim=32   # 2*$n_latent
 		     i=$((i + 1));
@@ -33,17 +33,20 @@ for lr in 0.0005; do
                                    --lex_n_latent ${lex_n_latent} \
                                    --lex_vae_type ${lex_vae_type} \
                                    --lex_text_conditional \
+                                   --lex_n_downsample 1 \
                                    --lex_n_steps ${nsteps} \
+                                   --lex_att_loss_weight 0 \
                                    --h_dim ${h_dim} \
                                    --n_epoch ${n_epoch} \
                                    --modeltype ${modeltype} \
                                    --datatype ${datatype} \
                                    --filter_model \
                                    --lr ${lr} \
-                                   --n_workers 56 \
+                                   --n_workers 48 \
                                    --beta ${beta} \
                                    --vis_root exp_rnn_cond \
-                                   --tensorboard  'logs'
+                                   --tensorboard  'logs' \
+
 		 # fi
        done
     done

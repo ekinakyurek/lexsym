@@ -52,6 +52,14 @@ class Residual(nn.Module):
         return self.fn(x)
 
 
+class LambdaLayer(nn.Module):
+    def __init__(self, lambd):
+        super(LambdaLayer, self).__init__()
+        self.lambd = lambd
+    def forward(self, *x):
+        return self.lambd(*x)
+
+
 def conv3x3(input_dim, output_dim, kernel_dim=3):
     return Residual(nn.Sequential(
                 nn.Conv2d(input_dim, output_dim, kernel_dim, padding="same"),

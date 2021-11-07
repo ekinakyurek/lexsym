@@ -74,7 +74,7 @@ class VAE(nn.Module):
             nn.LeakyReLU(0.2),
             nn.ConvTranspose2d(dim, input_dim, 4, 2, padding=1),
         )
-
+        self.dropout = nn.Dropout(0.3)
         self.apply(weights_init)
 
     def reset_decoder_parameters(self):

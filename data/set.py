@@ -64,7 +64,8 @@ class SetDataset(object):
         annotation = self.annotations[i]
         img_file = annotation["image"]
         # desc = annotation["text"].split(" , ")
-        image = self.transform(Image.open(os.path.join(self.root,  img_file)).convert(self.color))
+        img_file = os.path.join(self.root,  img_file)
+        image = self.transform(Image.open(img_file).convert(self.color))
         # return [d.split() for d in desc], image
         return annotation["text"].split(), image, img_file
 

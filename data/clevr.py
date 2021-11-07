@@ -50,14 +50,14 @@ class CLEVRDataset(object):
                                      obj['shape']))
                             )
 
-            # desc = " | ".join(objs)
+            # text = " | ".join(objs)
             # if "answer" in annotation:
-            #     desc = desc + " " + annotation["answer"]
-            desc = " | ".join(objs) + " ."
-            annotation["desc"] = desc
+            #     text = text + " " + annotation["answer"]
+            text = " | ".join(objs) + " ."
+            annotation["text"] = text
             annotation["image"] = os.path.join(root, "images", split, annotation["image_filename"])
             if vocab is None:
-                for tok in desc.split():
+                for tok in text.split():
                     self.vocab.add(tok)
 
 
@@ -99,15 +99,15 @@ class CLEVRDataset(object):
 
     def __getitem__(self, i):
         annotation = self.annotations[i]
-        # objs = annotation["desc"][:-2].split(" | ")
+        # objs = annotation["text"][:-2].split(" | ")
         # random.shuffle(objs)
-        # desc = " | ".join(objs) + " ."
-        # desc = desc.split(" ")
-        desc = annotation["desc"].split(" ")
+        # text = " | ".join(objs) + " ."
+        # text = text.split(" ")
+        text = annotation["text"].split(" ")
         file = annotation["image"]
         with Image.open(file) as image:
             img = self.transform(image.convert(self.color))
-        return desc, img, file
+        return text, img, file
 
     def __len__(self):
         return len(self.annotations)
