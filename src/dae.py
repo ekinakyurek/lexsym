@@ -42,9 +42,9 @@ class DAE(nn.Module):
                         *self.up_blocks,
                         )
 
-    def forward(self,blocked_image):
-        encoded = self.encoder(blocked_image)
+    def forward(self, img, cmd=None):
+        encoded = self.encoder(img)
         z = self.proj(encoded)
         decoded = self.decoder(z)
-        loss = F.mse_loss(decoded, blocked_image)
+        loss = F.mse_loss(decoded, img)
         return loss, decoded, loss, None

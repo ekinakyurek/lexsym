@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import optim
 import math
 import io
 import random
@@ -10,7 +11,14 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as plticker
 import torchvision.transforms.functional as TF
 import os
+from absl import flags
+from absl import logging
+from torch.utils.tensorboard import SummaryWriter
 
+FLAGS = flags.FLAGS
+
+def device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -204,3 +212,80 @@ class ConfigDict(object):
         self._initial_dict = my_dict
         for key in my_dict:
             setattr(self, key, my_dict[key])
+
+
+def save_checkpoint(state, filename='checkpoint.pth.tar'):
+    torch.save(state, filename)
+
+
+def flags_to_path():
+    root = os.path.join(FLAGS.vis_root, FLAGS.datatype, FLAGS.modeltype)
+
+    if "VQVAE" in FLAGS.modeltype:
+        path = os.path.join(root,
+                            (f"beta_{FLAGS.beta}_ncodes_{FLAGS.n_codes}_"
+                             f"ldim_{FLAGS.n_latent}_dim_{FLAGS.h_dim}_"
+                             f"lr_{FLAGS.lr}")
+                            )
+    elif FLAGS.modeltype == 'FilterModel':
+        path = os.path.join(root, FLAGS.lex_vae_type,
+                            (f"dim_{FLAGS.n_latent}_"
+                             f"lr_{FLAGS.lr}_"
+                             f"beta_{FLAGS.beta}")
+                            )
+    else:
+        path = os.path.join(root,
+                            (f"beta_{FLAGS.beta}_ldim_{FLAGS.n_latent}_"
+                             f"dim_{FLAGS.h_dim}"
+                             f"_lr_{FLAGS.lr}")
+                            )
+    return path
+
+
+def get_tensorboard_writer():
+    path = flags_to_path()
+    if not hasattr(logging, 'tb_writer'):
+        logging.tb_writer = SummaryWriter(path)
+    return logging.tb_writer
+
+
+def set_logging_format(format='%(asctime)s [%(filename)s:%(lineno)d] %(message)s'):
+    logging._absl_handler.setFormatter(
+        logging.logging.Formatter(format, "%H:%M:%S"))
+
+
+def flags_to_args():
+    flags_dict = {k: v.value for k, v in FLAGS.__flags.items()}
+    return ConfigDict(flags_dict)
+
+
+def resume(model, args, mark='epoch'):
+    optimizer = None
+    if args.resume != '':
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        if os.path.isfile(args.resume):
+            print("=> loading checkpoint '{}'".format(args.resume))
+            if args.gpu is None:
+                checkpoint = torch.load(args.resume)
+            else:
+                # Map model to be loaded to specified single gpu.
+                loc = 'cuda:{}'.format(args.gpu)
+                checkpoint = torch.load(args.resume, map_location=loc)
+            if not isinstance(checkpoint, dict):
+                checkpoint = {'state_dict': checkpoint.state_dict()}
+            setattr(args, f'start_{mark}', checkpoint.get(mark, 0))
+            try:
+                model.load_state_dict(checkpoint['state_dict'])
+            except RuntimeError:
+                model.module.load_state_dict(checkpoint['state_dict'])
+
+            if 'optimizer' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer'])
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, checkpoint.get(mark, 0)))
+            del checkpoint
+        else:
+            print("=> no checkpoint found at '{}'".format(args.resume))
+    else:
+        print("Initialized the model from scratch")
+    return optimizer

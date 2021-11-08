@@ -87,20 +87,29 @@ class VectorQuantizedVAE(nn.Module):
         return self.decoder(z_q_x)
 
     def forward(self,
-                x,
-                cmds=None,
+                img,
+                cmd=None,
                 reconstruction_loss=True,
                 return_z=False,
+                only_loss=False,
                 ):
-        z_q_x, latents, loss, nll = self.encode(x, cmds)
-        x_tilde = self.decode(z_q_x, cmds)
-        reconstruction_error = F.mse_loss(x_tilde, x, reduction='sum')
-        if reconstruction_loss:
-            loss += (reconstruction_error / math.prod(x.shape))
+        if cmd is not None:
+            cmd = cmd.transpose(0, 1)
 
+        z_q_x, latents, loss, nll = self.encode(img, cmd)
+        x_tilde = self.decode(z_q_x, cmd)
+        reconstruction_error = F.mse_loss(x_tilde, img, reduction='sum')
+
+        if reconstruction_loss:
+            loss += (reconstruction_error / math.prod(img.shape))
+
+        nll = torch.tensor(nll, device=loss.device)
         if return_z:
             return z_q_x, loss, x_tilde, reconstruction_error, nll, latents
         else:
+            if only_loss:
+                return loss, {'reconstruction_error': reconstruction_error,
+                              'nll': nll}
             return loss, x_tilde, reconstruction_error, nll, z_q_x, latents
 
     def _log_prob(self, dist, z):
@@ -110,11 +119,11 @@ class VectorQuantizedVAE(nn.Module):
     def n_codes(self):
         return self.codebook1._num_embeddings
 
-    def nll(self, x, cmds=None):
-        z_q_x, latents, loss, nll = self.encode(x, cmds)
+    def nll(self, img, cmds=None):
+        z_q_x, latents, loss, nll = self.encode(img, cmds)
         x_tilde = self.decode(z_q_x, cmds)
         pxz = Normal(x_tilde, torch.ones_like(x_tilde))
-        return -self._log_prob(pxz, x).sum() + nll # this is single sample estimate, so it's lower bound
+        return -self._log_prob(pxz, img).sum() + nll # this is single sample estimate, so it's lower bound
 
 
 class ResBlock(nn.Module):

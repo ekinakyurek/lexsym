@@ -98,15 +98,18 @@ class VAE(nn.Module):
         return mu, logvar
 
     def forward(self,
-                x,
+                img,
                 cmd=None,
                 variational=True,
                 reconstruction_loss=True,
                 z_bias=None,
                 return_z=False,
+                only_loss=False,
                 ):
+        if cmd is not None:
+            cmd = cmd.transpose(0, 1)
 
-        mu, logvar = self.encode(x, cmd)
+        mu, logvar = self.encode(img, cmd)
 
         B = mu.shape[0]
 
@@ -125,15 +128,21 @@ class VAE(nn.Module):
         loss = self.beta * kl_div
 
         if reconstruction_loss:
-            reconstruction_error = (self.noise(x_tilde) - self.noise(x))\
+            reconstruction_error = (self.noise(x_tilde) - self.noise(img))\
                                     .pow(2).sum().div(mu.shape[0])
             loss += reconstruction_error
         else:
             reconstruction_error = .0
 
+        if type(kl_div) == float:
+            kl_div = torch.tensor(kl_div, device=loss.device)
+
         if return_z:
             return z, loss, x_tilde, reconstruction_error*B, kl_div*B
         else:
+            if only_loss:
+                return loss, {'reconstruction_error': reconstruction_error,
+                              'kl': kl_div}
             return loss, x_tilde, reconstruction_error*B, kl_div*B
 
     def nll(self, x, cmd=None, N=25):

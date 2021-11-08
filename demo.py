@@ -1,62 +1,58 @@
+import sys
+import os
+import io
+import base64
+import json
 import torch
+
+from flask import Flask
+from flask import render_template, request, jsonify
+
+import numpy as np
 from torch.utils.data import DataLoader
 import torchvision
 from torchvision.utils import make_grid, save_image
-from absl import app, flags
-FLAGS = flags.FLAGS
-from main import flags_to_path, device
-from src.utils import set_seed
-from main import VectorQuantizedVAE, CLEVRDataset, SetDataset, ShapeDataset, SCANDataset
-from flask import Flask, render_template, request, jsonify
+
+from absl import flags
 from absl import app as fapp
-import os
-import io, base64
-import json
-import numpy as np
-import sys
 
+import options
+import vae_train
+from src import utils
+from src.utils import set_seed
+from src.datasets import get_data
+from src.vqvae import VectorQuantizedVAE
+from src import parallel
 
+FLAGS = flags.FLAGS
 app = Flask(__name__)
 
-
-def init_fn(args):
-    set_seed(FLAGS.seed)
-
-    if FLAGS.datatype == "setpp":
-        train = SetDataset("data/setpp/", split="train")
-        test = SetDataset("data/setpp/", split="test", transform=train.transform, vocab=train.vocab)
-    elif FLAGS.datatype == "shapes":
-        train = ShapeDataset("data/shapes/", split="train")
-        test = ShapeDataset("data/shapes/", split="test", transform=train.transform, vocab=train.vocab)
-    elif FLAGS.datatype == "clevr":
-        train = CLEVRDataset("data/clevr/", split="trainA")
-        test = CLEVRDataset("data/clevr/", split="valB", transform=train.transform, vocab=train.vocab)
-    else:
-        train = SCANDataset("data/scan/", split="train")
-        test = SCANDataset("data/scan/", split="test", transform=train.transform, vocab=train.vocab)
-
-    vis_folder = flags_to_path()
+def init_fn(_):
+    train, test = get_data()
+    vis_folder = utils.flags_to_path()
     os.makedirs(vis_folder, exist_ok=True)
     print("vis folder:", vis_folder)
 
-    if FLAGS.modeltype == "VQVAE":
+    args = utils.flags_to_args()
+    if args.modeltype == "VQVAE":
         model = VectorQuantizedVAE(3,
-                                   FLAGS.h_dim,
-                                   FLAGS.n_latent,
-                                   n_codes=FLAGS.n_codes,
-                                   cc=FLAGS.commitment_cost,
-                                   decay=FLAGS.decay,
-                                   epsilon=FLAGS.epsilon,
-                                   beta=FLAGS.beta,
+                                   args.h_dim,
+                                   args.n_latent,
+                                   n_codes=args.n_codes,
+                                   cc=args.commitment_cost,
+                                   decay=args.decay,
+                                   epsilon=args.epsilon,
+                                   beta=args.beta,
                                    cmdproc=False,
                                    size=train.size,
-                                   ).to(device)
-        model.load_state_dict(torch.load(FLAGS.vae_path).state_dict())
+                                   ).to(utils.device())
+        utils.resume(model, args)
         model.eval()
     else:
-        raise ValueError(f"Model type {FLAGS.modeltype} not available for this")
-    with open(FLAGS.lex_path, "r") as f:
+        raise ValueError(f"Model type {args.modeltype} not available for this")
+    with open(args.lex_path, "r") as f:
         matchings = json.load(f)
+
     return model, train, test, vis_folder, matchings
 
 
@@ -69,8 +65,8 @@ def img2str(img):
 
 def encode_next():
     cmd, img, names = next(generator)
-    img = img.to(device)
-    cmd = cmd.to(device)
+    img = img.to(utils.device())
+    cmd = cmd.to(utils.device())
     _, recon, _, _, _, encodings = model(img, cmd)
     recon = recon.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
     encodings = encodings.flatten().cpu().tolist()
@@ -91,7 +87,7 @@ def get_next():
 @app.route('/decode', methods=['GET', 'POST'])
 def decode():
     encodings = np.array([int(request.form['cell'+str(i)]) for i in range(app.config['GRID_SIZE']**2)])
-    encodings = torch.from_numpy(encodings).to(device)
+    encodings = torch.from_numpy(encodings).to(utils.device())
     encodings = encodings.view(1, -1)
     print(encodings)
     quantized = model.codebook1._embedding(encodings)  # B,HW,C
@@ -119,4 +115,4 @@ if __name__ == "__main__":
     app.config['DATA_FOLDER'] = os.path.join(test.root, "images", test.split)
     app.config['GRID_SIZE'] = model.latent_shape[1]
     app.config['MATCHINGS'] = matchings
-    app.run(host='0.0.0.0', port=6635);
+    app.run(host='0.0.0.0', port=6632)

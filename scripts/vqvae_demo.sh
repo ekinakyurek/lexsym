@@ -25,6 +25,7 @@ for n_codes in 32; do
                                 --modeltype ${modeltype} \
                                 --datatype ${datatype} \
                                 --vae_path ${vae_path} \
+                                --resume ${vae_path} \
                                 --lex_path ${lex_path} \
                        	        --lr ${lr}
           fi
