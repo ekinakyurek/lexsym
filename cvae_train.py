@@ -25,8 +25,8 @@ import options
 from src import utils
 from src.lex import FilterModel
 from src.vqvae import VectorQuantizedVAE
-from src.vqvae import CVQVAE
-from src.vae import VAE, CVAE
+from src.cvqvae import CVQVAE
+from src.cvae import CVAE
 from src.dae import DAE
 from src import parallel
 from src.datasets import get_data
@@ -219,9 +219,10 @@ def train_cvae():
             T(make_grid(res, nrow=res.shape[0]//2)).convert("RGB").save(os.path.join(vis_folder, f"eval_{j}.png"))
             logging.info("saved")
 
+
 def main(_):
     train_cvae()
 
+
 if __name__ == "__main__":
-    logging.info(f"DEVICE: {utils.device}")
     app.run(main)
