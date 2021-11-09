@@ -5,7 +5,7 @@ seed=0
 modeltype=VQVAE
 datatype=setpp
 i=0
-for n_codes in 32 16 ; do
+for n_codes in 8; do
   for n_latent in 64; do
     for beta in 0.1 3.0; do
       for lr in 0.0003; do

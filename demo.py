@@ -12,6 +12,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 import torchvision
 from torchvision.utils import make_grid, save_image
+from torch import nn
 
 from absl import flags
 from absl import app as fapp
@@ -45,8 +46,11 @@ def init_fn(_):
                                    beta=args.beta,
                                    cmdproc=False,
                                    size=train.size,
-                                   ).to(utils.device())
-        utils.resume(model, args)
+                                   )
+        model = nn.DataParallel(model)
+        utils.resume(model, args, mark='iter')
+        model = model.module
+        model.to(utils.device())
         model.eval()
     else:
         raise ValueError(f"Model type {args.modeltype} not available for this")
@@ -65,10 +69,12 @@ def img2str(img):
 
 def encode_next():
     cmd, img, names = next(generator)
+    cmd = cmd.transpose(0, 1)
     img = img.to(utils.device())
     cmd = cmd.to(utils.device())
-    _, recon, _, _, _, encodings = model(img, cmd)
+    _, recon, _, _, _, encodings = model(**dict(img=img, cmd=cmd))
     recon = recon.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
+    recon = recon.clip_(0, 1)
     encodings = encodings.flatten().cpu().tolist()
     img = T(make_grid(recon)).convert("RGB")
     return img2str(img), encodings
@@ -95,6 +101,7 @@ def decode():
     z_rnn = quantized.transpose(1, 2).contiguous().view(1, C, app.config['GRID_SIZE'], app.config['GRID_SIZE'])
     recon = model.decode(z_rnn)
     recon = recon.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
+    recon = recon.clip_(0, 1)
     img = T(make_grid(recon)).convert("RGB")
     return json.dumps({"img": img2str(img)})
 

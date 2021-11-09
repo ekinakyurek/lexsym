@@ -8,6 +8,8 @@ from torch.utils import data as torch_data
 from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
 
+from tqdm import tqdm
+
 import options
 import vae_train
 from src import utils
@@ -53,9 +55,11 @@ def img2code(model,
                              num_workers=n_workers)
 
     for (split, loader) in zip(("train", "test"), (train_loader, test_loader)):
+        path = os.path.join(vis_folder, f"{split}_encodings.txt")
         generator = iter(loader)
-        with open(os.path.join(vis_folder, f"{split}_encodings.txt"), "w") as f:
-            for _ in range(len(generator)):
+        print('writing to: ', path)
+        with open(path, "w") as f:
+            for _ in tqdm(range(len(generator))):
                 try:
                     cmd, img, names = next(generator)
                 except StopIteration:
