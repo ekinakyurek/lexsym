@@ -11,7 +11,7 @@ from seq2seq import Vocab
 from absl import logging
 
 class SetDataset(object):
-    def __init__(self, root="data/setpp/", split="train", transform=None, vocab=None, color="RGB", size=(64, 64)):
+    def __init__(self, root="data/setpp/", split="train", transform=None, vocab=None, color="RGB", size=(64, 64), **kwargs):
         self.root = root
         self.split = split
         self.color = color

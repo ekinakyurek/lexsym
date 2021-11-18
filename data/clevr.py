@@ -19,15 +19,27 @@ class CLEVRDataset(object):
                  transform=None,
                  vocab=None,
                  color="RGB",
-                 size=(128, 128)):
+                 size=(128, 128),
+                 vqa=False,
+                 img2code=False,
+                 answer_vocab=None,
+                 no_images=False,
+                 ):
 
         self.root = root
         self.split = split
         self.color = color
         self.size = size
+        self.vqa = vqa
+        self.img2code = img2code
+        self.no_images = no_images
 
         with open(os.path.join(self.root, "scenes", f"CLEVR_{split}_scenes.json")) as reader:
             self.annotations = json.load(reader)["scenes"]
+
+        if img2code or vqa:
+            with open(os.path.join(self.root, "questions", f"CLEVR_{split}_questions.json")) as reader:
+                self.questions = json.load(reader)["questions"]
         #
         # self.annotations = list(filter(lambda a: len(a['objects']) < 5,
         #                           self.annotations))
@@ -37,8 +49,13 @@ class CLEVRDataset(object):
 
         if vocab is None:
             self.vocab = Vocab()
+            if vqa:
+                self.answer_vocab = Vocab()
+            else:
+                self.answer_vocab = None
         else:
             self.vocab = vocab
+            self.answer_vocab = answer_vocab
 
         for annotation in self.annotations:
             objects = annotation["objects"]
@@ -50,19 +67,17 @@ class CLEVRDataset(object):
                                      obj['shape']))
                             )
 
-            # text = " | ".join(objs)
-            # if "answer" in annotation:
-            #     text = text + " " + annotation["answer"]
             text = " | ".join(objs) + " ."
             annotation["text"] = text
-            annotation["image"] = os.path.join(root, "images", split, annotation["image_filename"])
-            if vocab is None:
-                for tok in text.split():
-                    self.vocab.add(tok)
+            annotation["image"] = os.path.join(root,
+                                               "images",
+                                               split,
+                                               annotation["image_filename"])
+            if not (vqa or img2code):
+                if vocab is None:
+                    for tok in text.split():
+                        self.vocab.add(tok)
 
-
-        # self.annotations = [a for a in self.annotations if len(a['objects'])<=3]
-        # pdb.set_trace()
         random.shuffle(self.annotations)
         logging.info(f"{split}: {len(self.annotations)}")
 
@@ -97,16 +112,43 @@ class CLEVRDataset(object):
             self.std = transform.transforms[-1].std
             self.transform = transform
 
+        if vqa or img2code:
+            for question in self.questions:
+                question_processed = question['question'][:-1].lower().strip()
+                answer_processed = question.get('answer', '?').lower().strip()
+                text = question_processed + " | " + answer_processed
+                question['text'] = text
+                question["image"] = os.path.join(root,
+                                                 "images",
+                                                 split,
+                                                 question["image_filename"])
+                question['question_processed'] = question_processed
+                question['answer_processed'] = answer_processed
+                if vocab is None:
+                    for tok in text.split():
+                        self.vocab.add(tok)
+                    if vqa:
+                        self.answer_vocab.add(answer_processed)
+
+            self.annotations = self.questions
+            random.shuffle(self.annotations)
+
+
     def __getitem__(self, i):
         annotation = self.annotations[i]
-        # objs = annotation["text"][:-2].split(" | ")
-        # random.shuffle(objs)
-        # text = " | ".join(objs) + " ."
-        # text = text.split(" ")
         text = annotation["text"].split(" ")
         file = annotation["image"]
-        with Image.open(file) as image:
-            img = self.transform(image.convert(self.color))
+        if not self.no_images:
+            with Image.open(file) as image:
+                img = self.transform(image.convert(self.color))
+        else:
+            img = None
+
+        if self.vqa:
+            question = annotation['question_processed'].split(" ")
+            answer = annotation["answer_processed"]
+            return question, img, answer, file
+
         return text, img, file
 
     def __len__(self):
@@ -116,7 +158,16 @@ class CLEVRDataset(object):
         return self.vocab.decode(cmd)
 
     def collate(self, batch):
-        cmds, imgs, files = zip(*batch)
-        enc_cmds = [torch.tensor(self.vocab.encode(cmd)) for cmd in cmds]
-        pad_cmds = pad_sequence(enc_cmds, padding_value=self.vocab.pad())
-        return pad_cmds, torch.stack(imgs, dim=0), files
+        if self.vqa:
+            questions, imgs, answers, files = zip(*batch)
+            enc_q = [torch.tensor(self.vocab.encode(q)) for q in questions]
+            pad_q = pad_sequence(enc_q, padding_value=self.vocab.pad())
+            enc_a = torch.tensor(self.answer_vocab.encode(answers))
+            if not self.no_images:
+                imgs = torch.stack(imgs, dim=0)
+            return pad_q, imgs, enc_a, files
+        else:
+            cmds, imgs, files = zip(*batch)
+            enc_cmds = [torch.tensor(self.vocab.encode(cmd)) for cmd in cmds]
+            pad_cmds = pad_sequence(enc_cmds, padding_value=self.vocab.pad())
+            return pad_cmds, torch.stack(imgs, dim=0), files

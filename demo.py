@@ -26,6 +26,16 @@ from src.vqvae import VectorQuantizedVAE
 from src import parallel
 
 FLAGS = flags.FLAGS
+
+flags.DEFINE_string("lex_path", default='',
+                    help='A prelearned lexicon path to be used in text-image '
+                         'vqvae models')
+
+flags.DEFINE_string('vae_path', default='',
+                    help='A pretrained vae path for conditional vae models.')
+
+
+
 app = Flask(__name__)
 
 def init_fn(_):

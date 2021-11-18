@@ -86,7 +86,7 @@ def img2code_runner(gpu, ngpus_per_node, args):
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
 
-    train, test = get_data()
+    train, test = get_data(img2code=True)
     vis_folder = utils.flags_to_path()
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)

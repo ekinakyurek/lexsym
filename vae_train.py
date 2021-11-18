@@ -35,28 +35,10 @@ from torchvision.utils import make_grid
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer('n_codes', default=10,
-                     help='Sets number of codes in vqvae.')
-
-
-flags.DEFINE_float('beta', default=1.0,
-                   help='Sets beta parameter in beta vae.')
-
-flags.DEFINE_float('commitment_cost', default=0.25,
-                   help='Sets commitment lost in vqvae')
-
-flags.DEFINE_float('epsilon', default=1e-5,
-                   help='Sets epsilon value in VQVAE.')
-
-flags.DEFINE_string('vae_path', default='',
-                    help='A pretrained vae path for conditional vae models.')
 
 flags.DEFINE_string("modeltype", default='VQVAE',
                     help='VAE, VQVAE, TODO: fix this flag for filter model')
 
-flags.DEFINE_string("lex_path", default='',
-                    help='A prelearned lexicon path to be used in text-image '
-                         'vqvae models')
 
 def evaluate_vqvae(model, test_loader, gpu=None):
     val_res_recon_error = 0.0

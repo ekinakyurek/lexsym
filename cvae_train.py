@@ -38,6 +38,14 @@ from torchvision.utils import save_image
 FLAGS = flags.FLAGS
 
 
+flags.DEFINE_string("lex_path", default='',
+                    help='A prelearned lexicon path to be used in text-image '
+                         'vqvae models')
+
+flags.DEFINE_string('vae_path', default='',
+                    help='A pretrained vae path for conditional vae models.')
+
+
 def evaluate_cvae(model,loader):
     val_recon_error = 0.0
     val_loss = 0.0

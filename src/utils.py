@@ -289,3 +289,77 @@ def resume(model, args, mark='epoch'):
     else:
         print("Initialized the model from scratch")
     return optimizer
+
+
+def filter_lexicon(lexicon):
+    # deleted_keys = set()
+    # for (k1, v1) in lexicon.items():
+    #     if len(v1) > 2:
+    #         deleted_keys.add(k1)
+    #
+    # for k in deleted_keys:
+    #     del lexicon[k]
+    #
+    # deleted_keys = set()
+    # for (k1, v1) in lexicon.items():
+    #     for ci, count in v1.items():
+    #         for (k2, v2) in lexicon.items():
+    #             if k2 == k1:
+    #                 continue
+    #             if ci in v2:
+    #                 deleted_keys.add(k1)
+    #                 deleted_keys.add(k2)
+    # for k in deleted_keys:
+    #     del lexicon[k]
+    #
+    # lexicon.pop('is')
+    # lexicon.pop('as')
+    # lexicon.pop('material')
+    # lexicon.pop('spher')
+    # lexicon.pop('10')
+    keys_to_hold = "yellow,red,green,cyan,purple,blue,gray,brown".split(",")
+    deleted_keys = set()
+    for k in lexicon.keys():
+        if k not in keys_to_hold:
+            deleted_keys.add(k)
+
+    for k in deleted_keys:
+        del lexicon[k]
+
+    return lexicon
+
+
+def swap_ids(tensor, id1, id2):
+    tensor.masked_fill_(tensor == id1, -1)
+    tensor.masked_fill_(tensor == id2, id1)
+    tensor.masked_fill_(tensor == -1, id2)
+
+
+def random_swap(lexicon, question, vocab, answer, answer_vocab, codes):
+    keys = filter(lambda k: vocab[k] in question or vocab[k] in answer, lexicon.keys())
+    keys = list(keys)
+    if len(keys) == 0:
+        ks = random.sample(list(lexicon.keys()))
+    else:
+        k1 = random.choice(keys)
+        all_keys = set(lexicon.keys())
+        all_keys.remove(k1)
+        k2 = random.choice(list(all_keys))
+        ks = [k1, k2]
+
+    ks_q_id = [vocab[k] for k in ks]
+    ks_a_id = [answer_vocab[k] for k in ks]
+
+    swap_ids(question, *ks_q_id)
+    swap_ids(answer, *ks_a_id)
+
+    for v, _ in lexicon[ks[0]].items():
+        codes.masked_fill_(codes == int(v), -1)
+
+    for v, _ in lexicon[ks[1]].items():
+        code1 = random.choice(list(lexicon[ks[0]].keys()))
+        codes.masked_fill_(codes == int(v), int(code1))
+
+    code2 = random.choice(list(lexicon[ks[1]].keys()))
+
+    codes.masked_fill_(codes == -1, int(code2))

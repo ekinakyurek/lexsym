@@ -23,7 +23,7 @@ flags.DEFINE_integer('n_batch', default=128,
 flags.DEFINE_integer('visualize_every', default=10,
                      help='Frequency of visualization.')
 
-flags.DEFINE_integer('n_iter', default=20000,
+flags.DEFINE_integer('n_iter', default=200000,
                      help='Number of iteration to train. Might not be used if '
                           'n_epoch is used.')
 

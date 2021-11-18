@@ -11,8 +11,23 @@ import operator
 import matplotlib.pyplot as plt
 import matplotlib.ticker as plticker
 import torchvision.transforms.functional as TF
-from absl import logging
+from absl import logging, flags
+
 EPS = 1e-7
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_integer('n_codes', default=10,
+                     help='Sets number of codes in vqvae.')
+
+flags.DEFINE_float('beta', default=1.0,
+                   help='Sets beta parameter in beta vae.')
+
+flags.DEFINE_float('commitment_cost', default=0.25,
+                   help='Sets commitment lost in vqvae')
+
+flags.DEFINE_float('epsilon', default=1e-5,
+                   help='Sets epsilon value in VQVAE.')
 
 
 class VectorQuantizedVAE(nn.Module):
