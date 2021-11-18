@@ -3,27 +3,25 @@ import os
 import io
 import base64
 import json
-import torch
 
 from flask import Flask
-from flask import render_template, request, jsonify
+from flask import render_template, request
 
 import numpy as np
+
+import torch
 from torch.utils.data import DataLoader
 import torchvision
-from torchvision.utils import make_grid, save_image
+from torchvision.utils import make_grid
 from torch import nn
 
 from absl import flags
-from absl import app as fapp
 
 import options
 import vae_train
 from src import utils
-from src.utils import set_seed
 from src.datasets import get_data
 from src.vqvae import VectorQuantizedVAE
-from src import parallel
 
 FLAGS = flags.FLAGS
 
@@ -35,8 +33,8 @@ flags.DEFINE_string('vae_path', default='',
                     help='A pretrained vae path for conditional vae models.')
 
 
-
 app = Flask(__name__)
+
 
 def init_fn(_):
     train, test = get_data()

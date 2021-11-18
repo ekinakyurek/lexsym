@@ -5,13 +5,10 @@ from .utils import weights_init, top_k_logits, fig2tensor
 import math
 import numpy as np
 import json
-from torch.distributions.normal import Normal
 from seq2seq import TransformerDecoderv2, TransformerDecoderLayerv2
 import operator
 import matplotlib.pyplot as plt
 import matplotlib.ticker as plticker
-import torchvision.transforms.functional as TF
-from absl import logging
 from vqvae import VectorQuantizedVAE
 EPS = 1e-7
 

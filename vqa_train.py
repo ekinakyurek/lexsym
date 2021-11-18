@@ -1,37 +1,21 @@
 import os
-import random
 import json
-import sys
-import itertools
 import functools
-import warnings
-import imageio
-import shutil
-
-import numpy as np
 import torch
 
 from absl import app, flags, logging
 from tqdm import tqdm
 
 from torch import optim
-from torch.utils import data as torch_data
-from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel
 
 import options
-from src.lex import FilterModel
-from src.vqvae import VectorQuantizedVAE
 from src import utils
 from src import parallel
 from src.vqa import VQA
 from src.datasets import get_data
 from seq2seq.src import NoamLR
-
-import torchvision
-from torchvision.utils import make_grid
 
 
 FLAGS = flags.FLAGS

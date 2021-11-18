@@ -2,12 +2,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import math
-from absl import logging
-from . import vae
-from .vqvae import VectorQuantizedVAE
 from .utils import reset_parameters
 from .utils import weights_init
-from .utils import conv3x3
 from .utils import View
 from .utils import LambdaLayer
 import numpy as np

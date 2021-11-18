@@ -1,9 +1,8 @@
-import imageio
 import json
-import numpy as np
 import os
 import torch
 import random
+import functools
 from torch.nn.utils.rnn import pad_sequence
 import torchvision.transforms as transforms
 from PIL import Image
@@ -83,6 +82,7 @@ class CLEVRDataset(object):
 
         if transform is None:
             T = transforms.Compose([transforms.ToTensor(),
+
                                     transforms.Resize(int(math.ceil(self.size[0]*1.1))),
                                     transforms.CenterCrop(self.size)])
             running_mean = torch.zeros(3, dtype=torch.float32)
@@ -101,12 +101,18 @@ class CLEVRDataset(object):
             var = running_var / N
             self.std = torch.sqrt(var)
 
+            rcrop = functools.partial(transforms.functional.resized_crop,
+                                      top=10,
+                                      left=20,
+                                      width=440,
+                                      height=300,
+                                      size=self.size,
+                                      interpolation=transforms.functional.InterpolationMode.BICUBIC)
 
             self.transform = transforms.Compose(
-                          [transforms.ToTensor(),
-                           transforms.Resize(int(math.ceil(self.size[0]*1.1))),
-                           transforms.CenterCrop(self.size),
-                           transforms.Normalize(self.mean, self.std)])
+                                  [transforms.ToTensor(),
+                                   rcrop,
+                                   transforms.Normalize(self.mean, self.std)])
         else:
             self.mean = transform.transforms[-1].mean
             self.std = transform.transforms[-1].std

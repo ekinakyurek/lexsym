@@ -3,8 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import numpy as np
-from torch.distributions.normal import Normal
-import torchvision.transforms.functional as TF
 from .vqvae import VectorQuantizedVAE
 EPS = 1e-7
 

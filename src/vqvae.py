@@ -1,21 +1,16 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .utils import weights_init, top_k_logits, fig2tensor
+from .utils import weights_init
 import math
 import numpy as np
-import json
 from torch.distributions.normal import Normal
-from seq2seq import TransformerDecoderv2, TransformerDecoderLayerv2
-import operator
-import matplotlib.pyplot as plt
-import matplotlib.ticker as plticker
-import torchvision.transforms.functional as TF
 from absl import logging, flags
 
 EPS = 1e-7
 
 FLAGS = flags.FLAGS
+
 
 flags.DEFINE_integer('n_codes', default=10,
                      help='Sets number of codes in vqvae.')

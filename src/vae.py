@@ -2,14 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
-from torch.distributions import kl_divergence
 from .utils import weights_init
 from .utils import View
 from .utils import reset_parameters
 from .utils import conv3x3
 import numpy as np
-import math
-from seq2seq import Encoder, EncDec
 from absl import logging
 
 

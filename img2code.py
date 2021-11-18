@@ -1,22 +1,13 @@
 import os
-import torch
-
 from absl import app, flags, logging
 
-from torch import optim
-from torch.utils import data as torch_data
 from torch.utils.data import DataLoader
-from torchvision.utils import make_grid
 
 from tqdm import tqdm
 
 import options
-import vae_train
 from src import utils
-from src.lex import FilterModel
 from src.vqvae import VectorQuantizedVAE
-from src.vae import VAE
-from src.dae import DAE
 from src import parallel
 from src.datasets import get_data
 

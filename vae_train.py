@@ -1,28 +1,12 @@
 import os
-import random
-import json
-import sys
-import itertools
 import functools
-import warnings
-import imageio
-import shutil
-
-import numpy as np
-import torch
-
 from absl import app, flags, logging
-from tqdm import tqdm
-
+import torch
 from torch import optim
-from torch.utils import data as torch_data
-from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel
 
 import options
-from src.lex import FilterModel
 from src.vqvae import VectorQuantizedVAE
 from src.vae import VAE
 from src.dae import DAE
@@ -56,6 +40,7 @@ def evaluate_vqvae(model, test_loader, gpu=None):
 
     return val_res_recon_error / cnt, val_res_nll / cnt
 
+
 def visualize_vae(model, test_loader, train, vis_folder, i=0, gpu=None):
     T = torchvision.transforms.ToPILImage(mode=train.color)
     test_iter = iter(test_loader)
@@ -72,6 +57,7 @@ def visualize_vae(model, test_loader, train, vis_folder, i=0, gpu=None):
         sample, *_ = model.sample(B=32)
         sample = sample.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
         T(make_grid(sample.clip_(0, 1))).convert("RGB").save(os.path.join(vis_folder, f"prior_{i}_{j}.png"))
+
 
 def train_vae_model(model,
                     train,
@@ -144,7 +130,7 @@ def train_vae_model(model,
         loss = loss.mean()
         optimizer.zero_grad()
         loss.backward()
-        #torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
         optimizer.step()
         train_res_recon_error += errors['reconstruction_error'].mean().item()
         cnt += img.shape[0]

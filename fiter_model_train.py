@@ -1,6 +1,4 @@
 import os
-import json
-import sys
 import functools
 import imageio
 import shutil
@@ -8,23 +6,18 @@ import shutil
 import numpy as np
 import torch
 
-
 from absl import app, flags, logging
 from tqdm import tqdm
 
 from torch import optim
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel
-from torchvision.utils import make_grid
 
 import options
 from src import utils
 from src.lex import FilterModel
 from src.vqvae import VectorQuantizedVAE
-from src.vqvae import CVQVAE
-from src.vae import VAE, CVAE
-from src.dae import DAE
+from src.vae import VAE
 from src import parallel
 from src.datasets import get_data
 

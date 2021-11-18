@@ -11,28 +11,29 @@
 #SBATCH --array=1-16
 
 n_batch=512
-h_dim=64
+h_dim=128
 seed=0
 modeltype=VQA
 datatype=clevr
 i=0
 vis_root='vis_vqa'
-for n_codes in 32 ; do
-  for n_latent in 64; do
-    for beta in 1.0; do
-      for lr in 0.0003; do
+vqvae_root='visv2'
+CUDA_VISIBLE_DEVICES=0,1,2,3
+
+for n_latent in 64 128; do
+  for n_codes in 32 48; do
+    for lr in 0.0003 0.0005; do
           i=$((i + 1))
           exp_root="${vis_root}/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}"
       	  exp_folder="${exp_root}/codes/logs"
-          vae_path="vis/${datatype}/VQVAE/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/model.pt"
-          code_root=${vae_path//vis/vis_test}
-          code_root=${code_root//model.pt/}
+          vae_path="${vqvae_root}/${datatype}/VQVAE/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/checkpoint.pth.tar"
+          code_root=${vae_path//checkpoint.pth.tar/}
       	  mkdir -p $exp_folder
       	  PYTHONHASHSEED=${seed} python -u vqa_train.py \
                                             --seed ${seed} \
                                             --n_batch ${n_batch} \
-                                    	    --n_latent ${n_latent} \
-              			                    --n_codes ${n_codes} \
+                                    	      --n_latent ${n_latent} \
+                			                      --n_codes ${n_codes} \
                                             --h_dim ${h_dim} \
                                             --beta ${beta} \
                                             --modeltype ${modeltype} \
