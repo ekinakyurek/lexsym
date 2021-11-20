@@ -23,12 +23,16 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("modeltype", default='VQVAE',
                     help='VAE, VQVAE, TODO: fix this flag for filter model')
 
+flags.DEFINE_string("imgsize", default='128,128',
+                    help='resize dimension for input images')
+
 
 def evaluate_vqvae(model, test_loader, gpu=None):
     val_res_recon_error = 0.0
     val_res_nll = 0.0
     cnt = 0
     for (cmd, img, _) in iter(test_loader):
+        cmd = cmd.transpose(0, 1)
         if gpu is not None:
             img = img.cuda(gpu, non_blocking=True)
             cmd = cmd.cuda(gpu, non_blocking=True)
@@ -41,21 +45,26 @@ def evaluate_vqvae(model, test_loader, gpu=None):
     return val_res_recon_error / cnt, val_res_nll / cnt
 
 
+def unnormalize(img, std, mean):
+    return img * std[None, :, None, None] + mean[None, :, None, None]
+
+
 def visualize_vae(model, test_loader, train, vis_folder, i=0, gpu=None):
     T = torchvision.transforms.ToPILImage(mode=train.color)
     test_iter = iter(test_loader)
     for j in range(5):
         cmd, img, _ = next(test_iter)
+        cmd = cmd.transpose(0, 1)
         if gpu is not None:
             img = img.cuda(gpu, non_blocking=True)
             cmd = cmd.cuda(gpu, non_blocking=True)
-        loss, recon, recon_error, *_ = model(**dict(img=img, cmd=cmd))
-        recon = recon.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
-        img = img.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
+        _, recon, *_ = model(**dict(img=img, cmd=cmd))
+        recon = unnormalize(recon.cpu().data, train.std, train.mean)
+        img = unnormalize(img.cpu().data, train.std, train.mean)
         res = torch.cat((recon, img), 0).clip_(0, 1)
-        T(make_grid(res)).convert("RGB").save(os.path.join(vis_folder, f"{i}_{j}.png"))
+        T(make_grid(res)).convert(train.color).save(os.path.join(vis_folder, f"{i}_{j}.png"))
         sample, *_ = model.sample(B=32)
-        sample = sample.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
+        sample = unnormalize(sample.cpu().data, train.std, train.mean)
         T(make_grid(sample.clip_(0, 1))).convert("RGB").save(os.path.join(vis_folder, f"prior_{i}_{j}.png"))
 
 
@@ -157,8 +166,8 @@ def train_vae(gpu, ngpus_per_node, args):
     args.gpu = gpu
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
-
-    train, test = get_data()
+    img_size = tuple(map(int, args.imgsize.split(',')))
+    train, test = get_data(size=img_size)
     vis_folder = utils.flags_to_path()
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)

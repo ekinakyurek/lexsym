@@ -24,8 +24,7 @@ class PositionalEncoding(nn.Module):
             pe[:, 0, 1::2] = torch.cos(position * div_term)
 
         self.pe = nn.Parameter(pe, requires_grad=True)
-
-        #self.register_parameter('pe', pe)
+        # self.register_parameter('pe', pe)
 
     def forward(self, x):
         """

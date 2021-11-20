@@ -14,6 +14,9 @@ from src.datasets import get_data
 
 FLAGS = flags.FLAGS
 
+flags.DEFINE_string("modeltype", default='VQVAE',
+                    help='VAE, VQVAE, TODO: fix this flag for filter model')
+
 
 def img2code(model,
              train,

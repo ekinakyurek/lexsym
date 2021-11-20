@@ -20,7 +20,7 @@ for n_codes in 32; do
                                 --n_batch ${n_batch} \
                       	        --n_latent ${n_latent} \
                                 --n_codes ${n_codes} \
-                             	--h_dim ${h_dim} \
+                             	  --h_dim ${h_dim} \
                                 --beta ${beta} \
                                 --modeltype ${modeltype} \
                                 --datatype ${datatype} \

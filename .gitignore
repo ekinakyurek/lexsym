@@ -12,7 +12,6 @@ exp_rnn_cond/
 logs/
 data/clevr
 data/WikiTableQuestions
-.vscode/
 *.tar.gz
 *.err
 

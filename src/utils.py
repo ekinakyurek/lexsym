@@ -17,8 +17,10 @@ from torch.utils.tensorboard import SummaryWriter
 
 FLAGS = flags.FLAGS
 
+
 def device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -64,6 +66,7 @@ class LambdaLayer(nn.Module):
     def __init__(self, lambd):
         super(LambdaLayer, self).__init__()
         self.lambd = lambd
+        
     def forward(self, *x):
         return self.lambd(*x)
 
@@ -126,6 +129,7 @@ def sample(model, x, steps, temperature=1.0, sample=False, top_k=None):
 
     return x
 
+
 def fig2tensor(fig):
     """Convert a Matplotlib figure to a PIL Image and return it"""
     buf = io.BytesIO()
@@ -134,9 +138,11 @@ def fig2tensor(fig):
     img = Image.open(buf).convert("RGB")
     return TF.to_tensor(img)
 
+
 def make_number_grid(encodings):
     B = encodings.shape[0]
     return torch.stack([number_matrix(encodings[i]) for i in range(B)],dim=0)
+
 
 def number_matrix(encoding, size=(512,512)):
     # Open image file
