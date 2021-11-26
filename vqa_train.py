@@ -21,7 +21,6 @@ from src.vqa import VQA
 from src.datasets import get_data
 from seq2seq.src import NoamLR
 
-
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("modeltype", default='VQA',
@@ -40,6 +39,8 @@ flags.DEFINE_string("code_files", default='',
 flags.DEFINE_integer("warmup_steps", default=-1,
                      help="noam warmup_steps")
 
+flags.DEFINE_string("imgsize", default='128,128',
+                    help='resize dimension for input images')
 
 def unnormalize(img, std, mean):
     return img * std[None, :, None, None] + mean[None, :, None, None]
@@ -233,7 +234,12 @@ def train_vqa_model_model(model,
                 logging.info('Train Loss: %.6f', (nll / total))
                 writer.add_scalar('Loss/Train', nll/total, i+1)
                 model.eval()
-                val_nll, val_acc = evaluate_model(model, test_loader, code_cache, gpu=gpu, writer=writer, niter=i+1)
+                val_nll, val_acc = evaluate_model(model,
+                                                  test_loader,
+                                                  code_cache,
+                                                  gpu=gpu,
+                                                  writer=writer,
+                                                  niter=i+1)
                 print(f"val_nll: {val_nll} val_acc: {val_acc}")
                 # Save checkpoint
                 utils.save_checkpoint({
@@ -257,6 +263,7 @@ def train_vqa_model(gpu, ngpus_per_node, args):
     args.gpu = gpu
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
+    img_size = tuple(map(int, args.imgsize.split(',')))
     
     code_cache = lexicon = None
 
@@ -269,14 +276,16 @@ def train_vqa_model(gpu, ngpus_per_node, args):
                     _, code, filename = line.split('\t')
                     code_cache[filename.strip()] = torch.tensor(
                                         list(map(int, code.split())))
-
+        assert code_cache is not None
+        print('using code cache')
+        
     if args.lex_path:
         with open(args.lex_path) as handle:
             lexicon = json.load(handle)
         lexicon = utils.filter_lexicon(lexicon)
         print(lexicon)
 
-    train, test = get_data(vqa=True, no_images=code_cache is not None)
+    train, test = get_data(vqa=True, no_images=code_cache is not None, size=img_size)
 
     if args.modeltype == "VQA":
         model = VQA(3,
@@ -295,18 +304,23 @@ def train_vqa_model(gpu, ngpus_per_node, args):
     else:
         raise ValueError(f"Not supported model type {args.modeltype}")
 
-    args.start_iter = 0
+    
     optimizer = None
-
-    if args.resume == '':
+    args.start_iter = 0
+    
+    if args.resume == '' and code_cache is None:
         args.resume = args.vae_path
         vqvae = nn.DataParallel(model.vqvae)
         utils.resume(vqvae, args, mark='iter')
         model.vqvae = vqvae.module
         model = parallel.distribute(model, args)
-    else:
+        args.start_iter = 0
+    elif args.resume != '':
+        args.start_iter = 0
         model = parallel.distribute(model, args)
         optimizer = utils.resume(model, args, mark='iter')
+    else:
+        model = parallel.distribute(model, args)
 
     train_vqa_model_model(model,
                           train,

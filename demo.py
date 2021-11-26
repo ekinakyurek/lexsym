@@ -37,12 +37,14 @@ app = Flask(__name__)
 
 
 def init_fn(_):
-    train, test = get_data()
+    args = utils.flags_to_args()
     vis_folder = utils.flags_to_path()
+    img_size = tuple(map(int, args.imgsize.split(',')))
+    train, test = get_data(size=img_size)
     os.makedirs(vis_folder, exist_ok=True)
     print("vis folder:", vis_folder)
 
-    args = utils.flags_to_args()
+
     if args.modeltype == "VQVAE":
         model = VectorQuantizedVAE(3,
                                    args.h_dim,

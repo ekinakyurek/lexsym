@@ -26,7 +26,7 @@ flags.DEFINE_float('epsilon', default=1e-5,
 
 
 class VectorQuantizedVAE(nn.Module):
-    def __init__(self, input_dim, dim, edim, n_codes=16, cc=0.25, decay=0.99, epsilon=1e-5, beta=1.0, cmdproc=False, size=(64,64)):
+    def __init__(self, input_dim, dim, edim, n_codes=16, cc=0.25, decay=0.99, epsilon=1e-5, beta=1.0, cmdproc=False, size=(64, 64)):
         super().__init__()
 
         self.h_dim = dim
@@ -47,8 +47,9 @@ class VectorQuantizedVAE(nn.Module):
         )
 
         with torch.no_grad():
-            mu = self.encoder(torch.ones(1,3,*size))
-            self.latent_shape= (self.l_dim,mu.shape[2], mu.shape[3])
+            print("Img size: ", size)
+            mu = self.encoder(torch.ones(1, 3, *size))
+            self.latent_shape = (self.l_dim, mu.shape[2], mu.shape[3])
             logging.info(f"latent_shape: {self.latent_shape}")
 
         self.codebook1 = VectorQuantizerEMA(n_codes, self.latent_shape, cc=cc, decay=decay, epsilon=epsilon, beta=beta, cmdproc=cmdproc)

@@ -18,20 +18,20 @@ modeltype=VQVAE
 datatype=clevr
 i=0
 beta=1.0
-
+vis_root='vis_large_img'
+vqvae_root='vis_large_img'
+CUDA_VISIBLE_DEVICES=0,1,2,3,10,11,12,14
+imgsize="128,128"
 
 ulimit -n 10000
 ulimit -x unlimited
 
-CUDA_VISIBLE_DEVICES=12,13,14,15
-
 eval "$(conda shell.bash hook)"
 conda activate generative
-vis_root='visv2'
 
-for n_latent in 64 128; do
-  for n_codes in 32 48; do
-    for lr in 0.0003 0.0005; do
+for n_latent in 64; do
+  for n_codes in 32; do
+    for lr in 0.0003; do
              exp_root="${vis_root}/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}"
              exp_folder="${vis_root}/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/codes/logs"
              vae_path="${vis_root}/${datatype}/VQVAE/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/checkpoint.pth.tar"
@@ -43,10 +43,11 @@ for n_latent in 64 128; do
                                                 --n_latent ${n_latent} \
                                                 --n_codes ${n_codes} \
                                                 --h_dim ${h_dim} \
-                                                --n_workers 16 \
+                                                --n_workers 32 \
                                                 --datatype ${datatype} \
                                                 --resume ${vae_path} \
                                                 --vis_root ${vis_root} \
+                                                --imgsize ${imgsize} \
                                                 --lr ${lr}
               awk -F'\t' '{print $1" ||| "$2}' ${exp_root}/train_encodings.txt  > ${exp_root}/train_encodings.fast
               fast_align -i ${exp_root}/train_encodings.fast -v > ${exp_root}/forward.align

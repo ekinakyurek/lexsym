@@ -17,6 +17,8 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("modeltype", default='VQVAE',
                     help='VAE, VQVAE, TODO: fix this flag for filter model')
 
+flags.DEFINE_string("imgsize", default='128,128',
+                    help='resize dimension for input images')
 
 def img2code(model,
              train,
@@ -79,8 +81,8 @@ def img2code_runner(gpu, ngpus_per_node, args):
     args.gpu = gpu
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
-
-    train, test = get_data(img2code=True)
+    img_size = tuple(map(int, args.imgsize.split(',')))
+    train, test = get_data(size=img_size, img2code=True)
     vis_folder = utils.flags_to_path()
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)

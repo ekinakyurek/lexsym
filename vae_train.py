@@ -139,7 +139,7 @@ def train_vae_model(model,
         loss = loss.mean()
         optimizer.zero_grad()
         loss.backward()
-        # torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
         optimizer.step()
         train_res_recon_error += errors['reconstruction_error'].mean().item()
         cnt += img.shape[0]

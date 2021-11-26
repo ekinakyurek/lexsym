@@ -9,21 +9,28 @@
 #SBATCH --gres=gpu:volta:1
 #SBATCH --array=1-8
 
+
 n_batch=512
 h_dim=128
-n_iter=100000
 seed=0
 modeltype=VQVAE
 datatype=clevr
-beta=1.0
 i=0
+beta=1.0
+vis_root='vis_large_img'
+vqvae_root='vis_large_img'
+CUDA_VISIBLE_DEVICES=0,1,2,3,10,11,12,14
+imgsize="128,128"
+n_iter=100000
+
 
 ulimit -n 10000
 ulimit -x unlimited
 
-CUDA_VISIBLE_DEVICES=0,1,2,3
-vis_root="vis_large_img"
-for n_latent in 64 128; do
+eval "$(conda shell.bash hook)"
+conda activate generative
+
+for n_latent in 64; do
   for n_codes in 32; do
     for lr in 0.0003; do
         i=$((i + 1));
@@ -37,13 +44,13 @@ for n_latent in 64 128; do
         --n_codes ${n_codes} \
         --n_iter ${n_iter} \
         --h_dim ${h_dim} \
-        --imgsize "196,196" \
+        --imgsize ${imgsize} \
         --modeltype ${modeltype} \
         --datatype ${datatype} \
         --lr ${lr} \
-        --n_workers 16 \
+        --n_workers 32 \
         --vis_root ${vis_root} \
-        --visualize_every 1000 > $exp_folder/eval.out 2> $exp_folder/eval.err
+        --visualize_every 10000 > $exp_folder/eval.out 2> $exp_folder/eval.err
       # fi
     done
   done

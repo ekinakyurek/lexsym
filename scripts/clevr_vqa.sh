@@ -17,9 +17,16 @@ modeltype=VQA
 datatype=clevr
 i=0
 beta=1.0
-vis_root='vis_vqa'
-vqvae_root='visv2'
-CUDA_VISIBLE_DEVICES=12,13,14,15
+vis_root='vis_vqa_large'
+vqvae_root='vis_large_img'
+CUDA_VISIBLE_DEVICES=0,1,2,3,10,11,12,14
+imgsize="128,128"
+
+ulimit -n 10000
+ulimit -x unlimited
+
+eval "$(conda shell.bash hook)"
+conda activate generative
 
 for n_latent in 64; do
   for n_codes in 32; do
@@ -43,11 +50,12 @@ for n_latent in 64; do
                                             --vae_path ${vae_path} \
                                             --vis_root ${vis_root} \
                                             --lex_path ${lex_path} \
-                                            --n_workers 16 \
+                                            --n_workers 32 \
+                                            --imgsize ${imgsize} \
                                             --code_files "${code_root}/train_encodings.txt,${code_root}/test_encodings.txt" \
                                             --lr 1.0 \
                                             --warmup_steps 10000 \
-                                            --visualize_every 1000
+                                            --visualize_every 10000
   done
  done
 done
