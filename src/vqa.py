@@ -47,22 +47,22 @@ class VQA(nn.Module):
                             nn.TransformerEncoderLayer(
                                 d_model=rnn_dim,
                                 dim_feedforward=4*rnn_dim,
-                                nhead=4),
-                            num_layers=8)
+                                nhead=4),  # 4
+                            num_layers=10)  # 8
 
-        self.q_embed = nn.Embedding(len(self.vocab), rnn_dim,
+        self.q_embed = nn.Embedding(len(self.vocab), rnn_dim,  # rnn_dim
                                         padding_idx=self.vocab.pad())
 
-        self.q_pos_embed = PositionalEncoding(rnn_dim, max_len=max_len)
+        self.q_pos_embed = PositionalEncoding(rnn_dim, max_len=max_len)  # rnn_dim
 
-        self.img_embed = nn.Embedding(self.vqvae.n_codes, rnn_dim)
+        self.img_embed = nn.Embedding(self.vqvae.n_codes, rnn_dim)  # rnn_dim
         self.img_posx_embed = PositionalEncoding(rnn_dim // 2,
                                                  max_len=self.vqvae.latent_shape[1])
         self.img_posy_embed = PositionalEncoding(rnn_dim // 2,
                                                  max_len=self.vqvae.latent_shape[2],
                                                  transpose=True)
 
-        self.answer_proj = nn.Linear(rnn_dim, len(out_vocab))
+        self.answer_proj = nn.Linear(rnn_dim, len(out_vocab))  # rnn_dim
 
 
     def init_weights(self):
