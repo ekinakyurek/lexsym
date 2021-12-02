@@ -86,3 +86,9 @@ flags.DEFINE_integer('decoder_reset', default=-1,
 
 flags.DEFINE_string("resume", default='',
                     help='Path to the main model to resume training')
+
+flags.DEFINE_float("gclip", default=-1,
+                    help='gradient clip')
+
+flags.DEFINE_integer("gaccum", default=1,
+                     help='gradient accumulation')

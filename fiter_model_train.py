@@ -49,6 +49,7 @@ flags.DEFINE_bool('lex_append_z', default=False,
 
 def train_filter_model(model,
                        train,
+                       val,
                        test,
                        vis_folder,
                        optimizer=None,
@@ -346,7 +347,7 @@ def filter_model(gpu, ngpus_per_node, args):
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
 
-    train, test = get_data()
+    train, val, test = get_data()
     vis_folder = utils.flags_to_path()
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)
@@ -389,10 +390,11 @@ def filter_model(gpu, ngpus_per_node, args):
 
     args.start_epoch = 0
 
-    optimizer = utils.resume(model, args)
+    optimizer, scheduler = utils.resume(model, args)
 
     train_filter_model(model,
                        train,
+                       val,
                        test,
                        vis_folder,
                        optimizer=optimizer,

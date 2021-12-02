@@ -1,0 +1,135 @@
+import json
+import itertools
+import copy
+import random
+from absl import logging
+
+def filter_lexicon(lexicon):
+    keys_to_hold = "yellow,red,green,cyan,purple,blue,gray,brown".split(",")
+    deleted_keys = set()
+    for k in lexicon.keys():
+        if k not in keys_to_hold:
+            deleted_keys.add(k)
+
+    for k in deleted_keys:
+        del lexicon[k]
+
+    return lexicon
+
+
+def load_lexicon(lexicon_path, train_path):
+    lexicon = json.load(open(lexicon_path))
+    inputs = []
+    with open(train_path, 'r') as f:
+        for line in f:
+            inputs.append(line.split('\t')[0])
+    return lexicon, inputs
+
+def filter_uncommon_tokens(lexicon, threshold):
+    # Filter uncommon tokens
+    deleted_keys = set()
+    
+    for (k1, v1) in lexicon.items():
+        deleted_codes = set()
+        
+        for c, count in v1.items():
+            if count < threshold:
+                deleted_codes.add(c)
+        
+        for k in deleted_codes:
+            del v1[k]
+            
+        if len(v1) == 0:
+            deleted_keys.add(k1)
+            
+    for k in deleted_keys:
+        del lexicon[k]
+        
+    return lexicon
+
+
+def filter_intersected_tokens(lexicon):
+    deleted_keys = set()
+    for (k1, v1) in lexicon.items():
+        for ci, count in v1.items():
+            for (k2, v2) in lexicon.items():
+                if k2 == k1:
+                    continue
+                if ci in v2:
+                    deleted_keys.add(k1)
+                    deleted_keys.add(k2)
+    for k in deleted_keys:
+        del lexicon[k]
+    return lexicon
+    
+
+def get_swapables(lexicon, inputs):
+    swapables = {k: [] for k in lexicon.keys()}
+    for k1 in lexicon.keys():
+        for k2 in lexicon.keys():
+            if k1 != k2:
+                x1s = filter(lambda x: k1 in x, inputs)
+                x1s = list(itertools.islice(x1s, 5000))
+                x2s = filter(lambda x: k2 in x, inputs)
+                x2s = list(itertools.islice(x2s, 5000))
+                for (x1, x2) in itertools.product(x1s, x2s):
+                    if x1.replace(k1, k2) == x2:
+                        swapables[k1].append(k2)
+                        break
+    deleted_keys = set()               
+    for k, v in swapables.items():
+        if len(v) == 0:
+            deleted_keys.add(k)
+            
+    for k in deleted_keys:
+        del lexicon[k]
+        del swapables[k]
+             
+    return (lexicon, swapables)
+
+  
+def filter_lexicon_v2(lexicon, inputs):
+    lexicon = copy.deepcopy(lexicon)
+    lexicon = filter_uncommon_tokens(lexicon, len(inputs)/100)
+    lexicon = filter_intersected_tokens(lexicon)
+    lexicon, swapables = get_swapables(lexicon, inputs)
+    logging.info(f"Final Lexicon:\n{lexicon}")
+    return lexicon, swapables
+
+
+def swap_ids(tensor, id1, id2):
+    tensor.masked_fill_(tensor == id1, -1)
+    tensor.masked_fill_(tensor == id2, id1)
+    tensor.masked_fill_(tensor == -1, id2)
+
+
+def random_swap(lexicon_and_swapables, question, vocab, answer, answer_vocab, codes):
+    lexicon, swapables = lexicon_and_swapables
+    
+    keys = list(filter(lambda k: vocab[k] in question or vocab[k] in answer, lexicon.keys()))
+    
+    if len(keys) != 0:
+        k1 = random.choice(keys)
+        k2 = random.choice(swapables[k1])
+        ks = [k1, k2]
+    else:
+        k1 = random.choice(list(lexicon.keys()))
+        k2 = random.choice(swapables[k1])
+        ks = [k1, k2]
+        
+    ks_q_id = [vocab[k] for k in ks]
+    ks_a_id = [answer_vocab[k] for k in ks]
+
+    swap_ids(question, *ks_q_id)
+    swap_ids(answer, *ks_a_id)
+
+    for v, _ in lexicon[ks[0]].items():
+        codes.masked_fill_(codes == int(v), -1)
+
+    for v, _ in lexicon[ks[1]].items():
+        code1 = random.choice(list(lexicon[ks[0]].keys()))
+        codes.masked_fill_(codes == int(v), int(code1))
+
+    code2 = random.choice(list(lexicon[ks[1]].keys()))
+
+    codes.masked_fill_(codes == -1, int(code2))

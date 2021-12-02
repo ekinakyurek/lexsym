@@ -66,7 +66,7 @@ def evaluate_cvae(model,loader):
 def train_cvae():
     assert FLAGS.vae_path != ""
 
-    train, test = get_data()
+    train, val, test = get_data()
     vis_folder = utils.flags_to_path()
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)

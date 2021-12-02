@@ -16,6 +16,7 @@ from PIL import Image
 
 import options
 from src import utils
+from src import lexutils
 from src import parallel
 from src.vqa import VQA
 from src.datasets import get_data
@@ -26,14 +27,17 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("modeltype", default='VQA',
                     help='VQA')
 
-flags.DEFINE_string('vae_path', default='',
+flags.DEFINE_string('vae_path', default=None,
                     help='A pretrained vae path for conditional vae models.')
 
-flags.DEFINE_string("lex_path", default='',
+flags.DEFINE_string("lex_path", default=None,
                     help='A prelearned lexicon path to be used in text-image '
                          'vqvae models')
 
-flags.DEFINE_string("code_files", default='',
+flags.DEFINE_string("code_files", default=None,
+                    help='Pre cached codes for images')
+
+flags.DEFINE_string("train_codes", default=None,
                     help='Pre cached codes for images')
 
 flags.DEFINE_integer("warmup_steps", default=-1,
@@ -52,22 +56,24 @@ def decode_datum(question, answer, pred, vocab, answer_vocab):
     pred = answer_vocab._rev_contents[pred]
     return question, answer, pred
 
-
+## add categories to the dataset
+## print to a file
+## remove printing images
 def evaluate_model(model,
                    test_loader,
+                   vis_folder,
                    code_cache=None,
                    niter=0,
                    gpu=None,
-                   n_eval=1000,
-                   writer=None):
+                   writer=None,
+                   split="val"):
 
     vocab, answer_vocab = test_loader.dataset.vocab, test_loader.dataset.answer_vocab
 
     total = .0
     nlls = []
     accs = []
-    mistaken_images = []
-    mistaken_questions = []
+    predictions = []
 
     for (question, img, answer, files) in iter(test_loader):
 
@@ -86,49 +92,35 @@ def evaluate_model(model,
         nlls.append(nll.mean().item() * len(answer))
         total += len(answer)
     
-        for i in range(img.shape[0]):
-            datum = decode_datum(question[i].cpu().numpy(),
-                                 answer[i].item(),
-                                 pred[i].item(),
-                                 vocab,
-                                 answer_vocab)
+        if writer is not None:
+            for i in range(img.shape[0]):
+                datum = decode_datum(question[i].cpu().numpy(),
+                                     answer[i].item(),
+                                     pred[i].item(),
+                                     vocab,
+                                     answer_vocab)
 
-            question_i, answer_i, pred_i = datum
-
-            file_i = files[i]
-           
-            if pred_i != answer_i:
-                if len(mistaken_images) < 32:
-                    line = f"Q: {question_i}\tA: {answer_i}\tP: {pred_i}"
-                    mistaken_images.append(file_i)
-                    mistaken_questions.append(line)
-        if total > 1000:
-            break
+                question_i, answer_i, pred_i = datum
+                file_i = files[i]
+                line = f"{question_i}\t{answer_i}\t{pred_i}\t{file_i}"
+                predictions.append(line)
    
     mean_nll = np.sum(nlls) / total
     mean_acc = np.sum(accs) / total
 
     if writer is not None:
-        transform = transforms.ToTensor()
-        imgs = []
-        for image_file in mistaken_images:
-            with Image.open(image_file) as image:
-                img = transform(image.convert(test_loader.dataset.color))
-                imgs.append(img)
-        imgs = torch.stack(imgs, dim=0)
-        writer.add_images('mistaken_images', imgs, niter)
-        writer.add_text('mistaken_questions',
-                        "\n".join(mistaken_questions),
-                        niter)
-                         
-        writer.add_scalar("Accuracy/Test", mean_acc, niter)
-        writer.add_scalar("Loss/Test", mean_nll, niter)
+        with open(os.path.join(vis_foler, f'predictions_{split}_{niter}.txt')) as f:
+            f.writer("\n".join(predictions))
+            
+        writer.add_scalar(f"Accuracy/{split}", mean_acc, niter)
+        writer.add_scalar(f"Loss/Test/{split}", mean_nll, niter)
 
     return mean_nll, mean_acc
 
 
 def train_vqa_model_model(model,
                           train,
+                          val,
                           test,
                           vis_folder,
                           scheduler=None,
@@ -145,13 +137,20 @@ def train_vqa_model_model(model,
                           ngpus_per_node=1,
                           gpu=0,
                           rank=0,
-                          lr=0.0001):
+                          lr=0.0001,
+                          gclip=-1,
+                          gaccum=1):
 
     if optimizer is None:
         optimizer = optim.Adam(model.parameters(), lr=lr)
 
     if warmup_steps != -1 and scheduler is None:
-        scheduler = NoamLR(optimizer, model.module.rnn_dim, warmup_steps=warmup_steps)
+        try:
+            rnn_dim = model.rnn_dim
+        except:
+            rnn_dim = model.module.rnn_dim
+            
+        scheduler = NoamLR(optimizer, rnn_dim, warmup_steps=warmup_steps)
 
     main_worker = rank % ngpus_per_node == 0
     
@@ -167,6 +166,7 @@ def train_vqa_model_model(model,
                               collate_fn=train.collate,
                               sampler=train_sampler,
                               num_workers=n_workers,
+                              drop_last=gaccum > 1,
                               worker_init_fn=worker_init_fn)
 
     test_loader = DataLoader(test,
@@ -175,6 +175,13 @@ def train_vqa_model_model(model,
                              collate_fn=train.collate,
                              num_workers=n_workers,
                              worker_init_fn=utils.worker_init_fn)
+    
+    val_loader = DataLoader(val,
+                            batch_size=n_batch,
+                            shuffle=True,
+                            collate_fn=train.collate,
+                            num_workers=n_workers,
+                            worker_init_fn=utils.worker_init_fn)
 
     writer = utils.get_tensorboard_writer()
 
@@ -182,7 +189,7 @@ def train_vqa_model_model(model,
     train_iter = iter(train_loader)
     model.train()
 
-    for i in tqdm(range(start_iter, n_iter)):
+    for i in tqdm(range(start_iter, n_iter * gaccum)):
         # Get data
         try:
             question, img, answer, files = next(train_iter)
@@ -199,59 +206,76 @@ def train_vqa_model_model(model,
         if code_cache is not None:
             img = torch.stack([code_cache[f] for f in files], dim=0)
             if lexicon is not None:
-                utils.random_swap(lexicon,
-                                  question,
-                                  train.vocab,
-                                  answer,
-                                  train.answer_vocab,
-                                  img)
+                lexutils.random_swap(lexicon,
+                                     question,
+                                     train.vocab,
+                                     answer,
+                                     train.answer_vocab,
+                                     img)
         # Send data to gpu
         if gpu is not None:
             img = img.cuda(gpu, non_blocking=True)
             question = question.cuda(gpu, non_blocking=True)
             answer = answer.cuda(gpu, non_blocking=True)
 
+        if i % gaccum == 0:
+            optimizer.zero_grad()
+            
         # Take grad step on loss
         loss = model(**dict(question=question, img=img, answer=answer))
-        loss = loss.mean()
-        optimizer.zero_grad()
+        loss = loss.mean() / gaccum
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
-        optimizer.step()
+        
+        if (i+1) % gaccum == 0:
+            if gclip != -1:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), gclip)
+            optimizer.step()
 
-        # Step the scheduler
-        if scheduler is not None:
-            scheduler.step()
+            # Step the scheduler
+            if scheduler is not None:
+                scheduler.step()
 
-        # Accumulate metrics
-        total += img.shape[0]
-        nll += loss.item()
+        with torch.no_grad():
+            # Accumulate metrics
+            total += img.shape[0]
+            nll += loss.item()
 
         # Evaluate and display metrics
-        if main_worker and (i+1) % visualize_every == 0:
+        if main_worker and (i+1) % (visualize_every * gaccum) == 0:
             with torch.no_grad():
-                logging.info('%d iterations', (i+1))
+                logging.info('%d gradient updates', (i+1) / gaccum)
                 logging.info('Train Loss: %.6f', (nll / total))
                 writer.add_scalar('Loss/Train', nll/total, i+1)
                 model.eval()
                 val_nll, val_acc = evaluate_model(model,
-                                                  test_loader,
+                                                  val_loader,
+                                                  vis_folder,
                                                   code_cache,
                                                   gpu=gpu,
-                                                  writer=writer,
-                                                  niter=i+1)
+                                                  niter=i+1,
+                                                  split="val")
                 print(f"val_nll: {val_nll} val_acc: {val_acc}")
+                test_nll, test_acc = evaluate_model(model,
+                                                    test_loader,
+                                                    code_cache,
+                                                    vis_folder,
+                                                    gpu=gpu,
+                                                    writer=writer,
+                                                    niter=i+1,
+                                                    split="test")
+                print(f"test_nll: {test_nll} test_acc: {test_acc}")
                 # Save checkpoint
                 utils.save_checkpoint({
                     'epoch': epoch + 1,
                     'iter': i,
+                    'gaccum': gaccum,
                     'state_dict': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'scheduler': scheduler.state_dict(),
                 }, filename=os.path.join(vis_folder,
                                          'checkpoint.pth.tar'))
                 model.train()
-
+    
 
 def train_vqa_model(gpu, ngpus_per_node, args):
     assert args.vae_path is not None
@@ -267,7 +291,7 @@ def train_vqa_model(gpu, ngpus_per_node, args):
     
     code_cache = lexicon = None
 
-    if args.code_files:
+    if args.code_files is not None:
         code_cache = {}
         files = args.code_files.split(',')
         for file in files:
@@ -277,15 +301,14 @@ def train_vqa_model(gpu, ngpus_per_node, args):
                     code_cache[filename.strip()] = torch.tensor(
                                         list(map(int, code.split())))
         assert code_cache is not None
-        print('using code cache')
+        logging.info('using code cache')
         
-    if args.lex_path:
-        with open(args.lex_path) as handle:
-            lexicon = json.load(handle)
-        lexicon = utils.filter_lexicon(lexicon)
-        print(lexicon)
+    if args.lex_path is not None:
+        assert args.train_codes is not None
+        lexicon = lexutils.filter_lexicon_v2(*lexutils.load_lexicon(args.lex_path, args.train_codes))
+        logging.info(f'Lexicon:\n{lexicon}')
 
-    train, test = get_data(vqa=True, no_images=code_cache is not None, size=img_size)
+    train, val, test = get_data(vqa=True, no_images=code_cache is not None, size=img_size)
 
     if args.modeltype == "VQA":
         model = VQA(3,
@@ -306,24 +329,26 @@ def train_vqa_model(gpu, ngpus_per_node, args):
 
     
     optimizer = None
+    scheduler = None
     args.start_iter = 0
     
-    if args.resume == '' and code_cache is None:
+    if args.resume is not None and code_cache is None:
         args.resume = args.vae_path
         vqvae = nn.DataParallel(model.vqvae)
-        utils.resume(vqvae, args, mark='iter')
+        utils.resume(vqvae, args, mark='iter', load_optims=False)
         model.vqvae = vqvae.module
         model = parallel.distribute(model, args)
         args.start_iter = 0
-    elif args.resume != '':
+    elif args.resume is not None:
         args.start_iter = 0
         model = parallel.distribute(model, args)
-        optimizer = utils.resume(model, args, mark='iter')
+        optimizer, scheduler = utils.resume(model, args, mark='iter')
     else:
         model = parallel.distribute(model, args)
 
     train_vqa_model_model(model,
                           train,
+                          val,
                           test,
                           vis_folder,
                           lexicon=lexicon,
@@ -339,7 +364,9 @@ def train_vqa_model(gpu, ngpus_per_node, args):
                           ngpus_per_node=ngpus_per_node,
                           gpu=args.gpu,
                           rank=args.rank,
-                          lr=args.lr)
+                          lr=args.lr,
+                          gclip=args.gclip,
+                          gaccum=args.gaccum)
     
     if args.distributed:
         utils.cleanup()

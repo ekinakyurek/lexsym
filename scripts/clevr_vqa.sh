@@ -9,18 +9,19 @@
 #SBATCH --gres=gpu:volta:1
 #SBATCH --array=1-16
 
-n_batch=1024
+n_batch=512 
+gaccum=2
 h_dim=128
 seed=0
 modeltype=VQA
 datatype=clevr
 i=0
 beta=1.0
-vis_root='vis_vqa_hyper_512'
+vis_root='vis_vqa_final'
 vqvae_root='visv2'
-CUDA_VISIBLE_DEVICES=0,1,2,3,12,13,14,15
+CUDA_VISIBLE_DEVICES=0,1,2,3
 imgsize="128,128"
-
+vqa_lr=1.0
 ulimit -n 10000
 ulimit -x unlimited
 
@@ -52,10 +53,14 @@ for n_latent in 64; do
                                             --rnn_dim 512 \
                                             --n_workers 32 \
                                             --imgsize ${imgsize} \
-                                            --code_files "${code_root}/train_encodings.txt,${code_root}/test_encodings.txt" \
+                                            --code_files "${code_root}/train_encodings.txt,${code_root}/test_encodings.txt,${code_root}/val_encodings.txt" \
+                                            --train_codes "${code_root}/train_encodings.txt" \
                                             --lr 1.0 \
+                                            --gclip 5.0 \
+                                            --gaccum ${gaccum} \
                                             --warmup_steps 16000 \
-                                            --visualize_every 5000 > ${exp_folder}/eval.out 2> ${exp_folder}/eval.err
+                                            --dataroot "data/clevr/" \
+                                            --visualize_every 10000 > ${exp_folder}/eval.out 2> ${exp_folder}/eval.err
   done 
  done
 done

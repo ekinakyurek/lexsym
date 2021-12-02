@@ -22,6 +22,7 @@ flags.DEFINE_string("imgsize", default='128,128',
 
 def img2code(model,
              train,
+             val,
              test,
              vis_folder,
              n_batch=64,
@@ -49,8 +50,14 @@ def img2code(model,
                              shuffle=False,
                              collate_fn=train.collate,
                              num_workers=n_workers)
+    
+    val_loader = DataLoader(val,
+                            batch_size=n_batch,
+                            shuffle=False,
+                            collate_fn=train.collate,
+                            num_workers=n_workers)
 
-    for (split, loader) in zip(("train", "test"), (train_loader, test_loader)):
+    for (split, loader) in zip(("train", "test", "val"), (train_loader, test_loader, val_loader)):
         path = os.path.join(vis_folder, f"{split}_encodings.txt")
         generator = iter(loader)
         print('writing to: ', path)
@@ -82,7 +89,7 @@ def img2code_runner(gpu, ngpus_per_node, args):
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
     img_size = tuple(map(int, args.imgsize.split(',')))
-    train, test = get_data(size=img_size, img2code=True)
+    train, val, test = get_data(size=img_size, img2code=True)
     vis_folder = utils.flags_to_path()
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)
@@ -112,6 +119,7 @@ def img2code_runner(gpu, ngpus_per_node, args):
 
     img2code(model,
              train,
+             val,
              test,
              vis_folder,
              n_batch=args.n_batch,

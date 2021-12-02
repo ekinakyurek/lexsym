@@ -40,7 +40,7 @@ def init_fn(_):
     args = utils.flags_to_args()
     vis_folder = utils.flags_to_path()
     img_size = tuple(map(int, args.imgsize.split(',')))
-    train, test = get_data(size=img_size)
+    train, val, test = get_data(size=img_size)
     os.makedirs(vis_folder, exist_ok=True)
     print("vis folder:", vis_folder)
 
@@ -67,7 +67,7 @@ def init_fn(_):
     with open(args.lex_path, "r") as f:
         matchings = json.load(f)
 
-    return model, train, test, vis_folder, matchings
+    return model, train, val, test, vis_folder, matchings
 
 
 def img2str(img):
@@ -124,7 +124,7 @@ def index():
 
 if __name__ == "__main__":
     flags.FLAGS(sys.argv)
-    model, train, test, vis_folder, matchings = init_fn(sys.argv)
+    model, train, val, test, vis_folder, matchings = init_fn(sys.argv)
     test_loader = DataLoader(train, batch_size=1, shuffle=False, collate_fn=train.collate)
     generator = iter(test_loader)
     T = torchvision.transforms.ToPILImage(mode=train.color)

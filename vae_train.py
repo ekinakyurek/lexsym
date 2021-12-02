@@ -70,6 +70,7 @@ def visualize_vae(model, test_loader, train, vis_folder, i=0, gpu=None):
 
 def train_vae_model(model,
                     train,
+                    val,
                     test,
                     vis_folder,
                     optimizer=None,
@@ -82,9 +83,9 @@ def train_vae_model(model,
                     ngpus_per_node=1,
                     gpu=0,
                     rank=0,
-                    kl_anneal=False,
-                    decoder_reset=-1,
-                    lr=0.0001):
+                    lr=0.0001,
+                    gclip=-1,
+                    gaccum=1):
 
     if optimizer is None:
         optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -105,14 +106,23 @@ def train_vae_model(model,
                               collate_fn=train.collate,
                               sampler=train_sampler,
                               num_workers=n_workers,
+                              drop_last=gaccum > 1,
                               worker_init_fn=worker_init_fn)
-
+    
     test_loader = DataLoader(test,
                              batch_size=32,
                              shuffle=True,
                              collate_fn=train.collate,
                              num_workers=n_workers,
                              worker_init_fn=utils.worker_init_fn)
+    
+    val_loader = DataLoader(val,
+                            batch_size=32,
+                            shuffle=True,
+                            collate_fn=train.collate,
+                            num_workers=n_workers,
+                            worker_init_fn=utils.worker_init_fn)
+
 
     # writer = utils.get_tensorboard_writer()
     train_res_recon_error = 0.
@@ -120,7 +130,7 @@ def train_vae_model(model,
     epoch_count = 0
     train_iter = iter(train_loader)
     model.train()
-    for i in range(start_iter, n_iter):
+    for i in range(start_iter, n_iter * gaccum):
         try:
             cmd, img, _ = next(train_iter)
         except StopIteration:
@@ -134,24 +144,30 @@ def train_vae_model(model,
         if gpu is not None:
             cmd = cmd.cuda(gpu, non_blocking=True)
             img = img.cuda(gpu, non_blocking=True)
+            
+        if i % gaccum == 0:
+            optimizer.zero_grad()
 
         loss, errors = model(**dict(img=img, cmd=cmd, only_loss=True))
-        loss = loss.mean()
-        optimizer.zero_grad()
+        loss = loss.mean() / gaccum
         loss.backward()
-        # torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
-        optimizer.step()
-        train_res_recon_error += errors['reconstruction_error'].mean().item()
-        cnt += img.shape[0]
-        # train_res_nll.append(nll.item())
+        
+        if (i+1) % gaccum == 0:
+            if gclip != -1:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), gclip)
+            optimizer.step()
+        
+        with torch.no_grad():
+            train_res_recon_error += errors['reconstruction_error'].mean().item()
+            cnt += img.shape[0]
 
-        if main_worker and (i+1) % visualize_every == 0:
+        if main_worker and (i+1) % (visualize_every * gaccum) == 0:
             with torch.no_grad():
-                logging.info('%d iterations', (i+1))
+                logging.info('%d gradient iterations', (i+1) / gaccum)
                 logging.info('recon_error: %.6f',
                              (train_res_recon_error / cnt))
                 model.eval()
-                visualize_vae(model, test_loader, train, vis_folder, i=i, gpu=gpu)
+                visualize_vae(model, val_loader, train, vis_folder, i=i, gpu=gpu)
                 utils.save_checkpoint({
                     'epoch': epoch_count + 1,
                     'iter': i,
@@ -167,7 +183,7 @@ def train_vae(gpu, ngpus_per_node, args):
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
     img_size = tuple(map(int, args.imgsize.split(',')))
-    train, test = get_data(size=img_size)
+    train, val, test = get_data(size=img_size)
     vis_folder = utils.flags_to_path()
     os.makedirs(vis_folder, exist_ok=True)
     logging.info("vis folder: %s", vis_folder)
@@ -203,10 +219,11 @@ def train_vae(gpu, ngpus_per_node, args):
 
     args.start_iter = 0
 
-    optimizer = utils.resume(model, args, mark='iter')
+    optimizer, scheduler = utils.resume(model, args, mark='iter')
 
     train_vae_model(model,
                     train,
+                    val,
                     test,
                     vis_folder,
                     optimizer=optimizer,
@@ -220,8 +237,8 @@ def train_vae(gpu, ngpus_per_node, args):
                     gpu=args.gpu,
                     rank=args.rank,
                     lr=args.lr,
-                    kl_anneal=args.kl_anneal,
-                    decoder_reset=args.decoder_reset)
+                    gclip=args.gclip,
+                    gaccum=args.gaccum)
 
     if args.distributed:
         utils.cleanup()

@@ -1,5 +1,4 @@
 #!/bin/bash
-#!/bin/bash
 #SBATCH --job-name=clevr
 #SBATCH --time=58:00:00
 #SBATCH --cpus-per-task=12
@@ -12,15 +11,14 @@
 
 
 n_batch=512
-h_dim=128
 seed=0
 modeltype=VQVAE
 datatype=clevr
 i=0
 beta=1.0
-vis_root='vis_large_img'
-vqvae_root='vis_large_img'
-CUDA_VISIBLE_DEVICES=0,1,2,3,10,11,12,14
+vis_root='visv2'
+vqvae_root='visv2'
+CUDA_VISIBLE_DEVICES=0,1,2,3
 imgsize="128,128"
 
 ulimit -n 10000
@@ -29,6 +27,7 @@ ulimit -x unlimited
 eval "$(conda shell.bash hook)"
 conda activate generative
 
+h_dim=128
 for n_latent in 64; do
   for n_codes in 32; do
     for lr in 0.0003; do
@@ -48,6 +47,7 @@ for n_latent in 64; do
                                                 --resume ${vae_path} \
                                                 --vis_root ${vis_root} \
                                                 --imgsize ${imgsize} \
+                                                --dataroot "data/clevr/" \
                                                 --lr ${lr}
               awk -F'\t' '{print $1" ||| "$2}' ${exp_root}/train_encodings.txt  > ${exp_root}/train_encodings.fast
               fast_align -i ${exp_root}/train_encodings.fast -v > ${exp_root}/forward.align
