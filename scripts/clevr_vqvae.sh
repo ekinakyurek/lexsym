@@ -17,9 +17,9 @@ modeltype=VQVAE
 datatype=clevr
 i=0
 beta=1.0
-vis_root='vis_large_img'
-vqvae_root='vis_large_img'
-CUDA_VISIBLE_DEVICES=0,1,2,3,10,11,12,14
+vis_root='vis_clip'
+vqvae_root='vis_clip'
+CUDA_VISIBLE_DEVICES=0,1,2,3
 imgsize="128,128"
 n_iter=100000
 
@@ -50,6 +50,7 @@ for n_latent in 64; do
         --lr ${lr} \
         --n_workers 32 \
         --vis_root ${vis_root} \
+        --dataroot "data/clevr" \
         --visualize_every 10000 > $exp_folder/eval.out 2> $exp_folder/eval.err
       # fi
     done

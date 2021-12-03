@@ -43,6 +43,7 @@ def run_parallel(runner_fn):
 
     if FLAGS.seed is not None:
         utils.set_seed(FLAGS.seed + FLAGS.rank)
+        logging.info(f"Setting seed to {FLAGS.seed}")
 
     if FLAGS.gpu is not None:
         logging.warning('You have chosen a specific GPU. This '

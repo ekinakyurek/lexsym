@@ -40,7 +40,7 @@ def get_data(**kwargs):
         if os.path.isdir(os.path.join(root, 'images', 'trainA')):
             splits = {'train': 'trainA', 'val': 'valA', 'test': 'valB'}
         else:
-            splits = {'train': 'train', 'val': 'val', 'test': 'test'}
+            splits = {'train': 'train', 'val': 'val', 'test': 'val'}
         logging.info(f"Root data dir:  {root}")
         train = CLEVRDataset(root, split=splits['train'], **kwargs)
         test = CLEVRDataset(root,

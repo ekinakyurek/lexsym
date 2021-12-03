@@ -109,7 +109,7 @@ def evaluate_model(model,
     mean_acc = np.sum(accs) / total
 
     if writer is not None:
-        with open(os.path.join(vis_foler, f'predictions_{split}_{niter}.txt')) as f:
+        with open(os.path.join(vis_folder, f'predictions_{split}_{niter}.txt')) as f:
             f.writer("\n".join(predictions))
             
         writer.add_scalar(f"Accuracy/{split}", mean_acc, niter)
