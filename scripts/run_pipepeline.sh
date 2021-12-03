@@ -7,24 +7,26 @@
 #SBATCH --qos=high
 #SBATCH --constrain=xeon-g6
 #SBATCH --gres=gpu:volta:2
-#SBATCH --array=1-6
+#SBATCH --array=1-8
 
 n_batch=512
 modeltype_vae=VQVAE
 modeltype_vqa=VQA
 datatype=clevr
-n_workers=16
+n_workers=20
 vqa_lr=1.0
 beta=1.0
-vae_iter=50000
+vae_iter=100000
 vqa_iter=200000
 h_dim=128
+imgsize="128,128"
+i=0
 
-for seed in 0 1 2; do
-    for clevr_type in "clevr" "original_clevr"; do
+for clevr_type in "clevr" "original_clevr"; do
+    for seed in 0 1 2 3; do
         dataroot="data/${clevr_type}"
-        vqa_root="exp_vqa_seed_${seed}_${clevr_type}"
-        vae_root="exp_img_seed_${seed}_${clevr_type}"
+        vqa_root="clip_10_exp_vqa_seed_${seed}_${clevr_type}"
+        vae_root="clip_10_exp_img_seed_${seed}_${clevr_type}"
         for n_latent in 64; do
             for n_codes in 32; do
                 for lr in 0.0003; do
@@ -39,7 +41,7 @@ for seed in 0 1 2; do
                         mkdir -p $vqa_folder/logs
                         mkdir -p $vae_folder/logs
 
-                        echo $vqa_folder
+                        echo ${vqa_folder}
                         echo ${vae_folder}
 
                         PYTHONHASHSEED=${seed} python -u vae_train.py \
@@ -52,7 +54,8 @@ for seed in 0 1 2; do
                         --modeltype ${modeltype_vae} \
                         --datatype ${datatype} \
                         --lr ${lr} \
-                        --gaccum 2 \
+                        --gaccum 1 \
+			--gclip 10.0 \
                         --n_workers ${n_workers} \
                         --vis_root ${vae_root} \
                         --imgsize ${imgsize} \
