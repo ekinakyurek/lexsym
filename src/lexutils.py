@@ -4,6 +4,7 @@ import copy
 import random
 from absl import logging
 
+
 def filter_lexicon(lexicon):
     keys_to_hold = "yellow,red,green,cyan,purple,blue,gray,brown".split(",")
     deleted_keys = set()
@@ -64,18 +65,22 @@ def filter_intersected_tokens(lexicon):
     
 
 def get_swapables(lexicon, inputs):
+    inputs = copy.deepcopy(inputs)
+    random.shuffle(inputs)
     swapables = {k: [] for k in lexicon.keys()}
     for k1 in lexicon.keys():
         for k2 in lexicon.keys():
             if k1 != k2:
-                x1s = filter(lambda x: k1 in x, inputs)
-                x1s = list(itertools.islice(x1s, 5000))
-                x2s = filter(lambda x: k2 in x, inputs)
-                x2s = list(itertools.islice(x2s, 5000))
-                for (x1, x2) in itertools.product(x1s, x2s):
-                    if x1.replace(k1, k2) == x2:
-                        swapables[k1].append(k2)
-                        break
+                if k1 in swapables[k2]:
+                    swapables[k1].append(k2)
+                else:   
+                    x1s = itertools.islice(filter(lambda x: k1 in x, inputs), 5000)
+                    x2s = itertools.islice(filter(lambda x: k2 in x, inputs), 5000)
+                    for (x1, x2) in itertools.product(x1s, x2s):
+                        if x1.replace(k1, k2) == x2:
+                            swapables[k1].append(k2)
+                            print(f"Linked {k1} - {k2}")
+                            break
     deleted_keys = set()               
     for k, v in swapables.items():
         if len(v) == 0:
@@ -87,14 +92,23 @@ def get_swapables(lexicon, inputs):
              
     return (lexicon, swapables)
 
+def propagate_swaps(swapables): 
+    for k1, swaps in swapables.items():
+        for k2 in swaps:
+            swaps2 = swapables[k2]
+            if k1 in swaps2 and k2 not in swaps:
+                swaps.append(k2)
+            elif k2 in swaps and k1 not in swaps2:
+                swaps2.append(k1)
+    return swapables
+    
   
 def filter_lexicon_v2(lexicon, inputs):
     lexicon = copy.deepcopy(lexicon)
     lexicon = filter_uncommon_tokens(lexicon, len(inputs)/100)
     lexicon = filter_intersected_tokens(lexicon)
     lexicon, swapables = get_swapables(lexicon, inputs)
-    logging.info(f"Final Lexicon:\n{lexicon}")
-    return lexicon, swapables
+    return lexicon, propagate_swaps(swapables)
 
 
 def swap_ids(tensor, id1, id2):
@@ -104,7 +118,7 @@ def swap_ids(tensor, id1, id2):
 
 
 def random_swap(lexicon_and_swapables, question, vocab, answer, answer_vocab, codes):
-    lexicon, swapables = lexicon_and_swapables
+    lexicon, swapables = lexicon_and_swapables['lexicon'], lexicon_and_swapables['swapables']
     
     keys = list(filter(lambda k: vocab[k] in question or vocab[k] in answer, lexicon.keys()))
     

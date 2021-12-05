@@ -92,3 +92,6 @@ flags.DEFINE_float("gclip", default=-1,
 
 flags.DEFINE_integer("gaccum", default=1,
                      help='gradient accumulation')
+
+flags.DEFINE_integer("warmup_steps", default=-1,
+                     help="noam warmup_steps")

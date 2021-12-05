@@ -30,18 +30,12 @@ flags.DEFINE_string("modeltype", default='VQA',
 flags.DEFINE_string('vae_path', default=None,
                     help='A pretrained vae path for conditional vae models.')
 
-flags.DEFINE_string("lex_path", default=None,
+flags.DEFINE_string("lex_and_swaps_path", default=None,
                     help='A prelearned lexicon path to be used in text-image '
                          'vqvae models')
 
 flags.DEFINE_string("code_files", default=None,
                     help='Pre cached codes for images')
-
-flags.DEFINE_string("train_codes", default=None,
-                    help='Pre cached codes for images')
-
-flags.DEFINE_integer("warmup_steps", default=-1,
-                     help="noam warmup_steps")
 
 flags.DEFINE_string("imgsize", default='128,128',
                     help='resize dimension for input images')
@@ -109,8 +103,8 @@ def evaluate_model(model,
     mean_acc = np.sum(accs) / total
 
     if writer is not None:
-        with open(os.path.join(vis_folder, f'predictions_{split}_{niter}.txt')) as f:
-            f.writer("\n".join(predictions))
+        with open(os.path.join(vis_folder, f'predictions_{split}_{niter}.txt'), "w") as f:
+            f.write("\n".join(predictions))
             
         writer.add_scalar(f"Accuracy/{split}", mean_acc, niter)
         writer.add_scalar(f"Loss/Test/{split}", mean_nll, niter)
@@ -257,8 +251,8 @@ def train_vqa_model_model(model,
                 print(f"val_nll: {val_nll} val_acc: {val_acc}")
                 test_nll, test_acc = evaluate_model(model,
                                                     test_loader,
-                                                    code_cache,
                                                     vis_folder,
+                                                    code_cache,
                                                     gpu=gpu,
                                                     writer=writer,
                                                     niter=i+1,
@@ -303,10 +297,10 @@ def train_vqa_model(gpu, ngpus_per_node, args):
         assert code_cache is not None
         logging.info('using code cache')
         
-    if args.lex_path is not None:
-        assert args.train_codes is not None
-        lexicon = lexutils.filter_lexicon_v2(*lexutils.load_lexicon(args.lex_path, args.train_codes))
-        logging.info(f'Lexicon:\n{lexicon}')
+    if args.lex_and_swaps_path is not None:
+        with open(args.lex_and_swaps_path) as f:
+            lexicon = json.load(f)
+        logging.info(f'Lex and Swaps:\n{lexicon}')
 
     train, val, test = get_data(vqa=True, no_images=code_cache is not None, size=img_size)
 
