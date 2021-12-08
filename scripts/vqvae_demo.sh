@@ -5,8 +5,8 @@ seed=0
 modeltype=VQVAE
 datatype=clevr
 i=0
-vis_root="vis_large_img"
-CUDA_VISIBLE_DEVICES=9
+vis_root="clip_exp_img_seed_2_clevr"
+CUDA_VISIBLE_DEVICES=12
 for n_codes in 32; do
   for n_latent in 64; do
     for beta in 1.0; do
@@ -29,8 +29,9 @@ for n_codes in 32; do
                                 --vae_path ${vae_path} \
                                 --resume ${vae_path} \
                                 --lex_path ${lex_path} \
-                                --imgsize "160,160" \
+                                --imgsize "128,128" \
                                 --vis_root ${vis_root} \
+                                --dataroot "data/clevr/" \
                        	        --lr ${lr}
           fi
       done

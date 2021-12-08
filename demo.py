@@ -32,7 +32,6 @@ flags.DEFINE_string("lex_path", default='',
 flags.DEFINE_string('vae_path', default='',
                     help='A pretrained vae path for conditional vae models.')
 
-
 app = Flask(__name__)
 
 
