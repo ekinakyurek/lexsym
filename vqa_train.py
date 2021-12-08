@@ -200,6 +200,8 @@ def train_vqa_model_model(model,
         if code_cache is not None:
             img = torch.stack([code_cache[f] for f in files], dim=0)
             if lexicon is not None:
+                if i == 0:
+                    logging.info("Doing random  swaps!")
                 lexutils.random_swap(lexicon,
                                      question,
                                      train.vocab,
@@ -246,6 +248,7 @@ def train_vqa_model_model(model,
                                                   vis_folder,
                                                   code_cache,
                                                   gpu=gpu,
+                                                  writer=writer,
                                                   niter=i+1,
                                                   split="val")
                 print(f"val_nll: {val_nll} val_acc: {val_acc}")

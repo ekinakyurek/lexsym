@@ -1,15 +1,16 @@
 #!/bin/bash
 #SBATCH --job-name=clevr
-#SBATCH --time=64:00:00
+#SBATCH --time=200:00:00
 #SBATCH --cpus-per-task=20
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
 #SBATCH --qos=high
+#SBATCH --exclusive
 #SBATCH --constrain=xeon-g6
 #SBATCH --gres=gpu:volta:2
-#SBATCH --array=1-1
+#SBATCH --array=1-4
 
-n_batch=512
+n_batch=256
 modeltype_vae=VQVAE
 modeltype_vqa=VQA
 datatype=clevr
@@ -22,11 +23,11 @@ h_dim=128
 imgsize="128,128"
 i=0
 
-for clevr_type in "clevr" "original_clevr"; do
+for clevr_type in "original_clevr"; do
     for seed in 0 1 2 3; do
         dataroot="data/${clevr_type}"
         vae_root="clip_exp_img_seed_${seed}_${clevr_type}"
-        vqa_root="clip_exp_vqa_seed_${seed}_${clevr_type}"
+        vqa_root="clip_exp_no_swap_vqa_seed_${seed}_${clevr_type}"
         for n_latent in 64; do
             for n_codes in 32; do
                 for lr in 0.0003; do
@@ -38,7 +39,7 @@ for clevr_type in "clevr" "original_clevr"; do
                         vae_path="${vae_folder}/checkpoint.pth.tar"
                         
 
-            #             mkdir -p $vqa_folder/logs
+                        mkdir -p $vqa_folder/logs
             #             mkdir -p $vae_folder/logs
 
                         echo ${vqa_folder}
@@ -76,26 +77,26 @@ for clevr_type in "clevr" "original_clevr"; do
                         # --imgsize ${imgsize} \
                         # --lr ${lr} > $vae_folder/logs/img2code.out 2> $vae_folder/logs/img2code.err
 
-                        # awk -F'\t' '{print $1" ||| "$2}' ${vae_folder}/train_encodings.txt  > ${vae_folder}/train_encodings.fast
-                        # fast_align -i ${vae_folder}/train_encodings.fast -v > ${vae_folder}/forward.align
-                        # fast_align -i ${vae_folder}/train_encodings.fast -v -r > ${vae_folder}/reverse.align
-                        # fast_align -i ${vae_folder}/train_encodings.fast -o > ${vae_folder}/forward.align.o
-                        # fast_align -i ${vae_folder}/train_encodings.fast -o -r > ${vae_folder}/reverse.align.o
-                        # atools -i ${vae_folder}/forward.align -j ${vae_folder}/reverse.align -c intersect > ${vae_folder}/diag.align
-                        # atools -i ${vae_folder}/forward.align -j ${vae_folder}/reverse.align -c grow-diag > ${vae_folder}/grow-diag.align
-                        # atools -i ${vae_folder}/forward.align.o -j ${vae_folder}/reverse.align.o -c intersect > ${vae_folder}/diag.align.o
-                        # atools -i ${vae_folder}/forward.align.o -j ${vae_folder}/reverse.align.o -c grow-diag > ${vae_folder}/grow-diag.align.o
-                        # python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/forward.align
-                        # python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/reverse.align
-                        # python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/diag.align
-                        # python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/grow-diag.align
-                        # python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/forward.align.o
-                        # python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/reverse.align.o
-                        # python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/diag.align.o
-                        # python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/grow-diag.align.o
+                        awk -F'\t' '{print $1" ||| "$2}' ${vae_folder}/train_encodings.txt  > ${vae_folder}/train_encodings.fast
+                        fast_align -i ${vae_folder}/train_encodings.fast -v > ${vae_folder}/forward.align
+                        fast_align -i ${vae_folder}/train_encodings.fast -v -r > ${vae_folder}/reverse.align
+                        fast_align -i ${vae_folder}/train_encodings.fast -o > ${vae_folder}/forward.align.o
+                        fast_align -i ${vae_folder}/train_encodings.fast -o -r > ${vae_folder}/reverse.align.o
+                        atools -i ${vae_folder}/forward.align -j ${vae_folder}/reverse.align -c intersect > ${vae_folder}/diag.align
+                        atools -i ${vae_folder}/forward.align -j ${vae_folder}/reverse.align -c grow-diag > ${vae_folder}/grow-diag.align
+                        atools -i ${vae_folder}/forward.align.o -j ${vae_folder}/reverse.align.o -c intersect > ${vae_folder}/diag.align.o
+                        atools -i ${vae_folder}/forward.align.o -j ${vae_folder}/reverse.align.o -c grow-diag > ${vae_folder}/grow-diag.align.o
+                        python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/forward.align
+                        python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/reverse.align
+                        python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/diag.align
+                        python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/grow-diag.align
+                        python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/forward.align.o
+                        python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/reverse.align.o
+                        python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/diag.align.o
+                        python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/grow-diag.align.o
                         
-                        # python lex_and_swaps.py --lexfile ${vae_folder}/diag.align.o.json --codefile ${vae_folder}/train_encodings.txt
-                        # python lex_and_swaps.py --lexfile ${vae_folder}/diag.align.json --codefile ${vae_folder}/train_encodings.txt
+                        python lex_and_swaps.py --lexfile ${vae_folder}/diag.align.o.json --codefile ${vae_folder}/train_encodings.txt
+                        python lex_and_swaps.py --lexfile ${vae_folder}/diag.align.json --codefile ${vae_folder}/train_encodings.txt
                                 
                         lex_and_swaps_path=${vae_folder}/diag.align-swaps.json
                         code_root=${vae_folder}
@@ -111,17 +112,17 @@ for clevr_type in "clevr" "original_clevr"; do
                         --modeltype ${modeltype_vqa} \
                         --datatype ${datatype} \
                         --vae_path ${vae_path} \
-                        --lex_and_swaps_path ${lex_and_swaps_path} \
                         --vis_root ${vqa_root} \
                         --code_files "${code_root}/train_encodings.txt,${code_root}/test_encodings.txt,${code_root}/val_encodings.txt" \
                         --imgsize ${imgsize} \
                         --n_workers ${n_workers} \
                         --lr ${vqa_lr} \
                         --gclip 5.0 \
+             			--rnn_dim 512 \
                         --warmup_steps 16000 \
-                        --gaccum 2 \
+                        --gaccum 4 \
                         --dataroot ${dataroot} \
-                        --visualize_every 1000 > ${vqa_folder}/eval.err 2> ${vqa_folder}/eval.out
+                        --visualize_every 2000 > ${vqa_folder}/eval.err 2> ${vqa_folder}/eval.out
                     fi
                 done
             done

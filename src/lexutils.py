@@ -3,6 +3,13 @@ import itertools
 import copy
 import random
 from absl import logging
+from absl import flags
+
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_bool("substitute", default=False,
+                    help='substitute instead of swap')
 
 
 def filter_lexicon(lexicon):
@@ -34,7 +41,8 @@ def filter_uncommon_tokens(lexicon, threshold):
         deleted_codes = set()
         
         for c, count in v1.items():
-            if count < threshold:
+            
+            if count < threshold[k1] / 1000:
                 deleted_codes.add(c)
         
         for k in deleted_codes:
@@ -102,19 +110,31 @@ def propagate_swaps(swapables):
                 swaps2.append(k1)
     return swapables
     
-  
+def get_counts(lexicon, inputs):
+    counts = {k: 0 for k in lexicon.keys()}
+    for inp in inputs:
+        for k in counts.keys():
+            if k in inp:
+                counts[k]+= 1
+    return counts
+
+    
 def filter_lexicon_v2(lexicon, inputs):
     lexicon = copy.deepcopy(lexicon)
-    lexicon = filter_uncommon_tokens(lexicon, len(inputs)/100)
+    counts = get_counts(lexicon, inputs)
+    lexicon = filter_uncommon_tokens(lexicon, counts)
     lexicon = filter_intersected_tokens(lexicon)
     lexicon, swapables = get_swapables(lexicon, inputs)
     return lexicon, propagate_swaps(swapables)
 
 
-def swap_ids(tensor, id1, id2):
-    tensor.masked_fill_(tensor == id1, -1)
-    tensor.masked_fill_(tensor == id2, id1)
-    tensor.masked_fill_(tensor == -1, id2)
+def swap_ids(tensor, id1, id2, substitute=False):
+    if not substitute:
+        tensor.masked_fill_(tensor == id1, -1)
+        tensor.masked_fill_(tensor == id2, id1)
+        tensor.masked_fill_(tensor == -1, id2)
+    else:
+        tensor.masked_fill_(tensor == id1, id2)
 
 
 def random_swap(lexicon_and_swapables, question, vocab, answer, answer_vocab, codes):
@@ -134,16 +154,21 @@ def random_swap(lexicon_and_swapables, question, vocab, answer, answer_vocab, co
     ks_q_id = [vocab[k] for k in ks]
     ks_a_id = [answer_vocab[k] for k in ks]
 
-    swap_ids(question, *ks_q_id)
-    swap_ids(answer, *ks_a_id)
+    swap_ids(question, *ks_q_id, substitute=FLAGS.substitute)
+    swap_ids(answer, *ks_a_id, substitute=FLAGS.substitute)
 
-    for v, _ in lexicon[ks[0]].items():
-        codes.masked_fill_(codes == int(v), -1)
+    if not FLAGS.substitute:
+        for v, _ in lexicon[ks[0]].items():
+            codes.masked_fill_(codes == int(v), -1)
 
-    for v, _ in lexicon[ks[1]].items():
-        code1 = random.choice(list(lexicon[ks[0]].keys()))
-        codes.masked_fill_(codes == int(v), int(code1))
+        for v, _ in lexicon[ks[1]].items():
+            code1 = random.choice(list(lexicon[ks[0]].keys()))
+            codes.masked_fill_(codes == int(v), int(code1))
 
-    code2 = random.choice(list(lexicon[ks[1]].keys()))
+        code2 = random.choice(list(lexicon[ks[1]].keys()))
 
-    codes.masked_fill_(codes == -1, int(code2))
+        codes.masked_fill_(codes == -1, int(code2))
+    else:
+        for v, _ in lexicon[ks[0]].items():
+            codes.masked_fill_(codes == int(v), int(random.choice(list(lexicon[ks[1]].keys()))))
+    

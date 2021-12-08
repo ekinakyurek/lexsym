@@ -120,7 +120,7 @@ class CLEVRDataset(object):
 
         if vqa or img2code:
             for question in self.questions:
-                question_processed = question['question'][:-1].lower().strip()
+                question_processed = question['question'].lower().replace('?', '').strip()
                 question_processed = question_processed.replace(';', ' ;')
                 answer_processed = question.get('answer', '?').lower().strip()
                 text = question_processed + " | " + answer_processed
