@@ -4,6 +4,7 @@ import copy
 import random
 from absl import logging
 from absl import flags
+import torch
 
 
 FLAGS = flags.FLAGS
@@ -42,7 +43,7 @@ def filter_uncommon_tokens(lexicon, threshold):
         
         for c, count in v1.items():
             
-            if count < threshold[k1] / 1000:
+            if count < threshold[k1] / 100:
                 deleted_codes.add(c)
         
         for k in deleted_codes:
@@ -110,6 +111,7 @@ def propagate_swaps(swapables):
                 swaps2.append(k1)
     return swapables
     
+
 def get_counts(lexicon, inputs):
     counts = {k: 0 for k in lexicon.keys()}
     for inp in inputs:
@@ -162,13 +164,25 @@ def random_swap(lexicon_and_swapables, question, vocab, answer, answer_vocab, co
             codes.masked_fill_(codes == int(v), -1)
 
         for v, _ in lexicon[ks[1]].items():
-            code1 = random.choice(list(lexicon[ks[0]].keys()))
-            codes.masked_fill_(codes == int(v), int(code1))
-
-        code2 = random.choice(list(lexicon[ks[1]].keys()))
-
-        codes.masked_fill_(codes == -1, int(code2))
+            region2 = codes == int(v)
+            codes1 = random.choices(list(lexicon[ks[0]].keys()),
+                                    weights=list(lexicon[ks[0]].values()),
+                                    k=int(region2.sum().item()))
+            codes[region2] = torch.tensor(list(map(int, codes1)))
+        
+        region1 = codes == -1
+        
+        codes2 = random.choices(list(lexicon[ks[1]].keys()),
+                                weights=list(lexicon[ks[1]].values()),
+                                k=int(region1.sum().item()))
+        
+        codes[region1] = torch.tensor(list(map(int, codes2)))
     else:
         for v, _ in lexicon[ks[0]].items():
-            codes.masked_fill_(codes == int(v), int(random.choice(list(lexicon[ks[1]].keys()))))
+            region1 = codes == int(v)
+            codes2 = random.choices(list(lexicon[ks[1]].keys()),
+                                    weights=list(lexicon[ks[1]].values()),
+                                    k=int(region1.sum().item()))
+            
+            codes[region1] = torch.tensor(list(map(int, codes2)))
     
