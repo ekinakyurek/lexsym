@@ -96,7 +96,7 @@ for clevr_type in "clevr"; do
                         python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/grow-diag.align.o
                         
                         python lex_and_swaps.py --lexfile ${vae_folder}/diag.align.o.json --codefile ${vae_folder}/train_encodings.txt
-                        # python lex_and_swaps.py --lexfile ${vae_folder}/diag.align.json --codefile ${vae_folder}/train_encodings.txt
+                        python lex_and_swaps.py --lexfile ${vae_folder}/diag.align.json --codefile ${vae_folder}/train_encodings.txt
                                 
                         # lex_and_swaps_path=${vae_folder}/diag.align-swaps.json
 
