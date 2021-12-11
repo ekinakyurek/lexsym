@@ -80,7 +80,7 @@ class CLEVRDataset(object):
         random.shuffle(self.annotations)
         logging.info(f"{split}: {len(self.annotations)}")
 
-        if transform is None:
+        if not no_images and transform is None:
             T = transforms.Compose([transforms.ToTensor(),
 
                                     transforms.Resize(int(math.ceil(self.size[0]*1.1))),
@@ -113,6 +113,8 @@ class CLEVRDataset(object):
                                   [transforms.ToTensor(),
                                    rcrop,
                                    transforms.Normalize(self.mean, self.std)])
+        elif transform is None:
+            self.mean = self.std = self.transform = None
         else:
             self.mean = transform.transforms[-1].mean
             self.std = transform.transforms[-1].std
