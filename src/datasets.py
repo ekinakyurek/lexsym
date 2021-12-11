@@ -37,7 +37,7 @@ def get_data(**kwargs):
         val = test
     elif FLAGS.datatype == "clevr":
         root = "data/clevr/" if FLAGS.dataroot is None else FLAGS.dataroot
-        if os.path.isdir(os.path.join(root, 'scenes', 'CLEVR_trainA_scenes.json')):
+        if os.path.isfile(os.path.join(root, 'scenes', 'CLEVR_trainA_scenes.json')):
             splits = {'train': 'trainA', 'val': 'valA', 'test': 'valB'}
         else:
             splits = {'train': 'train', 'val': 'val', 'test': 'val'}
