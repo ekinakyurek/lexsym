@@ -16,8 +16,8 @@ h_dim=128
 imgsize="128,128"
 i=0
 
-clevr_type=$2
-aug=$3
+clevr_type=$1
+aug=$2
 seed=1
 
 dataroot="data/${clevr_type}"
