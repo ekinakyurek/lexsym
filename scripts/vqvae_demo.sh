@@ -5,8 +5,8 @@ seed=0
 modeltype=VQVAE
 datatype=clevr
 i=0
-vis_root="clip_exp_img_seed_2_clevr"
-CUDA_VISIBLE_DEVICES=12
+vis_root="new_vqvaes/seed_1"
+CUDA_VISIBLE_DEVICES=11
 for n_codes in 32; do
   for n_latent in 64; do
     for beta in 1.0; do
@@ -15,7 +15,7 @@ for n_codes in 32; do
           if [[ $i -eq $1 ]]; then
             exp_folder="${vis_root}/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/logs"
             vae_path="${vis_root}/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/checkpoint.pth.tar"
-            lex_path="${vis_root}/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/diag.align.json"
+            lex_and_swaps_path="${vis_root}/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/diag.align-swaps.json"
             mkdir -p $exp_folder
             PYTHONHASHSEED=${seed} python -u demo.py \
                                 --seed ${seed} \
@@ -28,7 +28,7 @@ for n_codes in 32; do
                                 --datatype ${datatype} \
                                 --vae_path ${vae_path} \
                                 --resume ${vae_path} \
-                                --lex_path ${lex_path} \
+                                --lex_and_swaps_path ${lex_and_swaps_path} \
                                 --imgsize "128,128" \
                                 --vis_root ${vis_root} \
                                 --dataroot "data/clevr/" \

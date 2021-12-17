@@ -139,6 +139,46 @@ def swap_ids(tensor, id1, id2, substitute=False):
         tensor.masked_fill_(tensor == id1, id2)
 
 
+def swap_codes(codes, lexicon, token1, token2, substitute=False):
+    if not substitute:
+        for v, _ in lexicon[token1].items():
+            codes.masked_fill_(codes == int(v), -1)
+
+        for v, _ in lexicon[token2].items():
+            region2 = codes == int(v)
+            length2 = int(region2.sum().item())
+            if length2 > 0:
+                possible_codes1 = list(lexicon[token1].keys())
+                code_scores1 = list(lexicon[token1].values())
+                codes1 = random.choices(possible_codes1,
+                                        weights=code_scores1,
+                                        k=length2)
+
+                codes[region2] = torch.tensor(list(map(int, codes1)))
+        
+        region1 = codes == -1
+        length1 = int(region1.sum().item())
+        if length1 > 0:
+            possible_codes2 = list(lexicon[token2].keys())
+            code_scores2 = list(lexicon[token2].values())
+            codes2 = random.choices(possible_codes2,
+                                    weights=code_scores2,
+                                    k=length1)
+            codes[region1] = torch.tensor(list(map(int, codes2)))
+    else:
+        for v, _ in lexicon[token1].items():
+            region1 = codes == int(v)
+            length1 = int(region1.sum().item())
+            possible_codes2 = list(lexicon[token2].keys())
+            code_scores2 = list(lexicon[token2].values())
+            
+            codes2 = random.choices(possible_codes2,
+                                    weights=code_scores2,
+                                    k=length1)
+            
+            codes[region1] = torch.tensor(list(map(int, codes2)))
+        
+        
 def random_swap(lexicon_and_swapables, question, vocab, answer, answer_vocab, codes):
     lexicon, swapables = lexicon_and_swapables['lexicon'], lexicon_and_swapables['swapables']
     
@@ -155,34 +195,7 @@ def random_swap(lexicon_and_swapables, question, vocab, answer, answer_vocab, co
         
     ks_q_id = [vocab[k] for k in ks]
     ks_a_id = [answer_vocab[k] for k in ks]
-
     swap_ids(question, *ks_q_id, substitute=FLAGS.substitute)
     swap_ids(answer, *ks_a_id, substitute=FLAGS.substitute)
-
-    if not FLAGS.substitute:
-        for v, _ in lexicon[ks[0]].items():
-            codes.masked_fill_(codes == int(v), -1)
-
-        for v, _ in lexicon[ks[1]].items():
-            region2 = codes == int(v)
-            codes1 = random.choices(list(lexicon[ks[0]].keys()),
-                                    weights=list(lexicon[ks[0]].values()),
-                                    k=int(region2.sum().item()))
-            codes[region2] = torch.tensor(list(map(int, codes1)))
-        
-        region1 = codes == -1
-        
-        codes2 = random.choices(list(lexicon[ks[1]].keys()),
-                                weights=list(lexicon[ks[1]].values()),
-                                k=int(region1.sum().item()))
-        
-        codes[region1] = torch.tensor(list(map(int, codes2)))
-    else:
-        for v, _ in lexicon[ks[0]].items():
-            region1 = codes == int(v)
-            codes2 = random.choices(list(lexicon[ks[1]].keys()),
-                                    weights=list(lexicon[ks[1]].values()),
-                                    k=int(region1.sum().item()))
-            
-            codes[region1] = torch.tensor(list(map(int, codes2)))
+    swap_codes(codes, lexicon, *ks, substitute=FLAGS.substitute)
     

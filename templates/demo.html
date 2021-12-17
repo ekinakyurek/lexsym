@@ -126,6 +126,26 @@
           });
       };
 
+      function swap(){
+
+        $("#form1").submit(function (e) {
+         e.preventDefault();
+         var form = $(this);
+         console.log(form.serialize())
+          $.ajax({
+            type: "POST",
+            url: "/swap",
+            data: form.serialize(),
+            success: function(data) {
+              // callback code here
+              result = JSON.parse(data);
+              document.getElementById("myimg").src =  'data:image/jpeg;base64,' + result['img']
+              set_encoding(result['encodings'])
+             }
+          });
+        });
+      }
+
        function decode(){
        $("#form1").submit(function (e) {
          e.preventDefault();
@@ -222,9 +242,10 @@
       <form id="form1"  action="" method="POST">
         <div id="container">
         </div>
-        <input type="submit" id="submitButton" name="submitButton" value="Submit" onclick="decode();">
+        <!-- <input type="submit" id="submitButton" name="submitButton" value="Submit" onclick="decode();"> -->
         <button type="button" onclick="get_next()"> Next </button>
-        <!-- <button type="button" onclick="decode()"> Decode </button> -->
+        <input  type="submit" id="submitButton" name="submitButton" value="Submit"  onclick="swap()">
+        <button type="button" onclick="swap()"> Swap </button> 
       </form>
       <button type="button" onclick="toggleform()"> toggleform</button>
     </div>
