@@ -142,6 +142,13 @@ class CLEVRDataset(object):
                         self.vocab.add(tok)
                     if vqa:
                         self.answer_vocab.add(answer_processed)
+                question.pop('program')
+                question.pop('split')
+                question.pop('question_family_index')
+                question.pop('question_index')
+                question.pop('image_index')
+                question.pop('question')
+                question.pop('answer')
 
             self.annotations = self.questions
             random.shuffle(self.annotations)

@@ -150,7 +150,7 @@ def train_vqa_model_model(model,
     
     hlog.log(ngpus_per_node)
 
-    train_sampler = DistributedSampler(train) if distributed else None
+    train_sampler = DistributedSampler(train, shuffle=True) if distributed else None
  
     worker_init_fn = functools.partial(utils.worker_init_fn, rank=rank)
 
@@ -180,18 +180,21 @@ def train_vqa_model_model(model,
     writer = utils.get_tensorboard_writer(vis_folder)
 
     total, nll, epoch = [0.] * 3
+    
+    if train_sampler:
+        train_sampler.set_epoch(0)  # FIX
+        
     train_iter = iter(train_loader)
     model.train()
-
     for i in tqdm(range(start_iter, n_iter * gaccum)):
         # Get data
         try:
             question, img, answer, files = next(train_iter)
         except StopIteration:
-            train_iter = iter(train_loader)
             epoch += 1
             if train_sampler:
                 train_sampler.set_epoch(epoch)  # FIX
+            train_iter = iter(train_loader)
             question, img, answer, files = next(train_iter)
 
         question = question.transpose(0, 1)
