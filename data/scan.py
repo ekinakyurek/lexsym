@@ -10,7 +10,7 @@ from PIL import Image
 import math
 import re
 from seq2seq import Vocab
-from absl import logging
+from seq2seq import hlog
 
 
 def get_digits(n, b, k=4):
@@ -85,7 +85,7 @@ class SCANDataset(object):
             self.vocab = vocab
 
         random.shuffle(self.annotations)
-        logging.info(f"{split}: {len(self.annotations)}")
+        hlog.log(f"{split}: {len(self.annotations)}")
 
         if transform is None:
             T = transforms.ToTensor()

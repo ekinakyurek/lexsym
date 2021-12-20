@@ -2,7 +2,7 @@ import json
 import itertools
 import copy
 import random
-from absl import logging
+from seq2seq import hlog
 from absl import flags
 import torch
 

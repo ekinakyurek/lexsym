@@ -3,7 +3,7 @@ import os
 import io
 import base64
 import json
-
+from seq2seq import hlog
 from flask import Flask
 from flask import render_template, request
 
@@ -15,7 +15,7 @@ import torchvision
 from torchvision.utils import make_grid
 from torch import nn
 
-from absl import flags, logging
+from absl import flags
 
 import options
 import vae_train
@@ -39,7 +39,7 @@ app = Flask(__name__)
 
 def init_fn(_):
     args = utils.flags_to_args()
-    vis_folder = utils.flags_to_path()
+    vis_folder = utils.flags_to_path(args)
     img_size = tuple(map(int, args.imgsize.split(',')))
     train, val, test = get_data(size=img_size)
     os.makedirs(vis_folder, exist_ok=True)
@@ -69,7 +69,7 @@ def init_fn(_):
     if args.lex_and_swaps_path is not None:
         with open(args.lex_and_swaps_path) as f:
             lexicon = json.load(f)
-        logging.info(f'Lex and Swaps:\n{lexicon}')
+        hlog.log(f'Lex and Swaps:\n{lexicon}')
 
     return model, train, val, test, vis_folder, lexicon
 

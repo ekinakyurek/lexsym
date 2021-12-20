@@ -1,7 +1,9 @@
 import os
 import functools
-from absl import app, flags, logging
+from absl import app, flags
+from seq2seq import hlog
 import torch
+from tqdm import tqdm
 from torch import optim
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
@@ -91,10 +93,10 @@ def train_vae_model(model,
         optimizer = optim.Adam(model.parameters(), lr=lr)
 
     main_worker = rank % ngpus_per_node == 0
-    logging.info(ngpus_per_node)
+    hlog.log(ngpus_per_node)
 
     if distributed:
-        train_sampler = DistributedSampler(train)
+        train_sampler = DistributedSampler(train, shuffle=True)
     else:
         train_sampler = None
 
@@ -123,21 +125,23 @@ def train_vae_model(model,
                             num_workers=n_workers,
                             worker_init_fn=utils.worker_init_fn)
 
-
-    # writer = utils.get_tensorboard_writer()
-    train_res_recon_error = 0.
+    train_loss = 0.
     cnt = 0.
     epoch_count = 0
+    if train_sampler:
+        train_sampler.set_epoch(0)  # FIX
     train_iter = iter(train_loader)
     model.train()
-    for i in range(start_iter, n_iter * gaccum):
+    for i in tqdm(range(start_iter, n_iter * gaccum)):
         try:
             cmd, img, _ = next(train_iter)
         except StopIteration:
-            train_iter = iter(train_loader)
             epoch_count += 1
             if train_sampler:
                 train_sampler.set_epoch(epoch_count)  # FIX
+            print("Setting up the iterator")
+            train_iter = iter(train_loader)
+            print("Create the iterator")
             cmd, img, _ = next(train_iter)
 
         cmd = cmd.transpose(0, 1)
@@ -148,7 +152,7 @@ def train_vae_model(model,
         if i % gaccum == 0:
             optimizer.zero_grad()
 
-        loss, errors = model(**dict(img=img, cmd=cmd, only_loss=True))
+        loss = model(**dict(img=img, cmd=cmd, only_loss=True))
         loss = loss.mean() / gaccum
         loss.backward()
         
@@ -158,14 +162,13 @@ def train_vae_model(model,
             optimizer.step()
         
         with torch.no_grad():
-            train_res_recon_error += errors['reconstruction_error'].mean().item()
+            train_loss += loss.item()
             cnt += img.shape[0]
 
         if main_worker and (i+1) % (visualize_every * gaccum) == 0:
             with torch.no_grad():
-                logging.info('%d gradient iterations', (i+1) / gaccum)
-                logging.info('recon_error: %.6f',
-                             (train_res_recon_error / cnt))
+                hlog.log('%d gradient iterations' % ((i+1) / gaccum))
+                hlog.log('recon_error: %.6f' % (train_loss / cnt))
                 model.eval()
                 visualize_vae(model, val_loader, train, vis_folder, i=i, gpu=gpu)
                 utils.save_checkpoint({
@@ -183,10 +186,12 @@ def train_vae(gpu, ngpus_per_node, args):
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
     img_size = tuple(map(int, args.imgsize.split(',')))
-    train, val, test = get_data(size=img_size)
-    vis_folder = utils.flags_to_path()
+    train, val, test = get_data(datatype=args.datatype,
+                                dataroot=args.dataroot,
+                                size=img_size)
+    vis_folder = utils.flags_to_path(args)
     os.makedirs(vis_folder, exist_ok=True)
-    logging.info("vis folder: %s", vis_folder)
+    hlog.log("vis folder: %s" % vis_folder)
 
     if args.modeltype == "VQVAE":
         model = VectorQuantizedVAE(3, args.h_dim,
@@ -241,7 +246,7 @@ def train_vae(gpu, ngpus_per_node, args):
                     gaccum=args.gaccum)
 
     if args.distributed:
-        utils.cleanup()
+        parallel.cleanup()
 
 
 def main(_):

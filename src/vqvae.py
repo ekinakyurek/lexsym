@@ -5,7 +5,9 @@ from .utils import weights_init
 import math
 import numpy as np
 from torch.distributions.normal import Normal
-from absl import logging, flags
+from absl import flags
+from . import parallel
+from seq2seq import hlog
 
 EPS = 1e-7
 
@@ -50,7 +52,7 @@ class VectorQuantizedVAE(nn.Module):
             print("Img size: ", size)
             mu = self.encoder(torch.ones(1, 3, *size))
             self.latent_shape = (self.l_dim, mu.shape[2], mu.shape[3])
-            logging.info(f"latent_shape: {self.latent_shape}")
+            hlog.log(f"latent_shape: {self.latent_shape}")
 
         self.codebook1 = VectorQuantizerEMA(n_codes, self.latent_shape, cc=cc, decay=decay, epsilon=epsilon, beta=beta, cmdproc=cmdproc)
         #
@@ -120,8 +122,7 @@ class VectorQuantizedVAE(nn.Module):
             return z_q_x, loss, x_tilde, reconstruction_error, nll, latents
         else:
             if only_loss:
-                return loss, {'reconstruction_error': reconstruction_error,
-                              'nll': nll}
+                return loss  # , {'reconstruction_error': reconstruction_error, 'nll': nll}
             return loss, x_tilde, reconstruction_error, nll, z_q_x, latents
 
     def _log_prob(self, dist, z):
@@ -202,21 +203,27 @@ class VectorQuantizerEMA(nn.Module):
 
         # # Use EMA to update the embedding vectors
         if self.training:
-            one_hot = torch.zeros(encoding_indices.shape[0], self._num_embeddings, device=inputs.device)
+            one_hot = torch.zeros(encoding_indices.shape[0],
+                                  self._num_embeddings, 
+                                  device=inputs.device)
             one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
-            self._ema_cluster_size = self._ema_cluster_size * self._decay + \
-                                     (1 - self._decay) * one_hot.sum(dim=0)
 
+            embed_onehot_sum = one_hot.sum(dim=0)
+            embed_sum = one_hot.t() @ flatten
+            
+            parallel.all_reduce(embed_onehot_sum)
+            parallel.all_reduce(embed_sum)
+            
+            self._ema_cluster_size.mul_(self._decay).add_(embed_onehot_sum, alpha=(1 - self._decay))
+            self._ema_w.data.mul_(self._decay).add_(embed_sum, alpha=(1 - self._decay))
+            
             # Laplace smoothing of the cluster size
-            n = torch.sum(self._ema_cluster_size.data)
+            n = self._ema_cluster_size.data.sum()
             self._ema_cluster_size = (
-                (self._ema_cluster_size + self._epsilon)
-                / (n + self._num_embeddings * self._epsilon) * n)
+                (self._ema_cluster_size + self._epsilon) / (n + self._num_embeddings * self._epsilon) * n
+            )
 
-            dw = one_hot.t() @ flatten
-            self._ema_w.data = self._ema_w * self._decay + (1 - self._decay) * dw
-
-            self._embedding.weight.data = self._ema_w / self._ema_cluster_size.unsqueeze(1)
+            self._embedding.weight.data.copy_(self._ema_w / self._ema_cluster_size.unsqueeze(1))
 
         # Loss
         e_latent_loss = F.mse_loss(quantized.detach(), inputs)

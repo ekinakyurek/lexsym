@@ -1,5 +1,6 @@
 import os
-from absl import app, flags, logging
+from absl import app, flags
+from seq2seq import hlog
 
 from torch.utils.data import DataLoader
 
@@ -37,7 +38,7 @@ def img2code(model,
     if not main_worker:
         return -1
 
-    logging.info(ngpus_per_node)
+    hlog.log(ngpus_per_node)
 
     train_loader = DataLoader(train,
                               batch_size=n_batch,
@@ -89,10 +90,13 @@ def img2code_runner(gpu, ngpus_per_node, args):
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
     img_size = tuple(map(int, args.imgsize.split(',')))
-    train, val, test = get_data(size=img_size, img2code=True)
-    vis_folder = utils.flags_to_path()
+    train, val, test = get_data(datatype=args.datatype,
+                                dataroot=args.dataroot,
+                                size=img_size,
+                                img2code=True)
+    vis_folder = utils.flags_to_path(args)
     os.makedirs(vis_folder, exist_ok=True)
-    logging.info("vis folder: %s", vis_folder)
+    hlog.log("vis folder: %s" % vis_folder)
 
     if args.modeltype == "VQVAE":
         model = VectorQuantizedVAE(3,

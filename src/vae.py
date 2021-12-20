@@ -7,7 +7,7 @@ from .utils import View
 from .utils import reset_parameters
 from .utils import conv3x3
 import numpy as np
-from absl import logging
+from seq2seq import hlog
 
 
 class VAE(nn.Module):
@@ -40,10 +40,10 @@ class VAE(nn.Module):
         with torch.no_grad():
             mu, _ = self.encoder(torch.ones(1, 3, *size)).chunk(2, dim=1)
             self.pre_latent_shape = mu.shape[1:]
-            logging.info(f"pre fc latent_shape: {self.pre_latent_shape}")
+            hlog.log(f"pre fc latent_shape: {self.pre_latent_shape}")
 
         self.latent_shape = (8*dim,)
-        logging.info(f"latent_shape: {np.prod(self.latent_shape) // 2}")
+        hlog.log(f"latent_shape: {np.prod(self.latent_shape) // 2}")
 
         self.down_proj = nn.Sequential(nn.Flatten(),
                                        nn.Linear(2*np.prod(self.pre_latent_shape),

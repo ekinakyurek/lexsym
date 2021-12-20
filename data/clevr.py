@@ -8,7 +8,6 @@ import torchvision.transforms as transforms
 from PIL import Image
 from seq2seq import Vocab
 import math
-from absl import logging
 
 
 class CLEVRDataset(object):
@@ -76,9 +75,14 @@ class CLEVRDataset(object):
                 if vocab is None:
                     for tok in text.split():
                         self.vocab.add(tok)
+            
+            annotation.pop('relationships')
+            annotation.pop('directions')
+            annotation.pop('objects')
+            annotation.pop('image_index')
+            annotation.pop('split')
 
         random.shuffle(self.annotations)
-        logging.info(f"{split}: {len(self.annotations)}")
 
         if not no_images and transform is None:
             T = transforms.Compose([transforms.ToTensor(),

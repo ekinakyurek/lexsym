@@ -2,8 +2,8 @@ import os
 import json
 import functools
 import torch
-
-from absl import app, flags, logging
+from seq2seq import hlog
+from absl import app, flags
 from tqdm import tqdm
 
 import numpy as np
@@ -148,7 +148,7 @@ def train_vqa_model_model(model,
 
     main_worker = rank % ngpus_per_node == 0
     
-    logging.info(ngpus_per_node)
+    hlog.log(ngpus_per_node)
 
     train_sampler = DistributedSampler(train) if distributed else None
  
@@ -177,7 +177,7 @@ def train_vqa_model_model(model,
                             num_workers=n_workers,
                             worker_init_fn=utils.worker_init_fn)
 
-    writer = utils.get_tensorboard_writer()
+    writer = utils.get_tensorboard_writer(vis_folder)
 
     total, nll, epoch = [0.] * 3
     train_iter = iter(train_loader)
@@ -201,7 +201,7 @@ def train_vqa_model_model(model,
             img = torch.stack([code_cache[f] for f in files], dim=0)
             if lexicon is not None:
                 if i == 0:
-                    logging.info("Doing random  swaps!")
+                    hlog.log("Doing random  swaps!")
                 lexutils.random_swap(lexicon,
                                      question,
                                      train.vocab,
@@ -239,8 +239,8 @@ def train_vqa_model_model(model,
         # Evaluate and display metrics
         if main_worker and (i+1) % (visualize_every * gaccum) == 0:
             with torch.no_grad():
-                logging.info('%d gradient updates', (i+1) / gaccum)
-                logging.info('Train Loss: %.6f', (nll / total))
+                hlog.log('%d gradient updates' % ((i+1) / gaccum))
+                hlog.log('Train Loss: %.6f' % (nll / total))
                 writer.add_scalar('Loss/Train', nll/total, i+1)
                 model.eval()
                 val_nll, val_acc = evaluate_model(model,
@@ -277,9 +277,9 @@ def train_vqa_model_model(model,
 def train_vqa_model(gpu, ngpus_per_node, args):
     assert args.vae_path is not None
     
-    vis_folder = utils.flags_to_path()
+    vis_folder = utils.flags_to_path(args)
     os.makedirs(vis_folder, exist_ok=True)
-    logging.info("vis folder: %s", vis_folder)
+    hlog.log("vis folder: %s" % vis_folder)
 
     args.gpu = gpu
     args.ngpus_per_node = ngpus_per_node
@@ -298,14 +298,17 @@ def train_vqa_model(gpu, ngpus_per_node, args):
                     code_cache[filename.strip()] = torch.tensor(
                                         list(map(int, code.split())))
         assert code_cache is not None
-        logging.info('using code cache')
+        hlog.log('using code cache')
         
     if args.lex_and_swaps_path is not None:
         with open(args.lex_and_swaps_path) as f:
             lexicon = json.load(f)
-        logging.info(f'Lex and Swaps:\n{lexicon}')
+        hlog.log(f'Lex and Swaps:\n{lexicon}')
 
-    train, val, test = get_data(vqa=True, no_images=code_cache is not None, size=img_size)
+    train, val, test = get_data(datatype=args.datatype,
+                                dataroot=args.dataroot,
+                                vqa=True, no_images=code_cache is not None,
+                                size=img_size)
 
     if args.modeltype == "VQA":
         model = VQA(3,
@@ -366,7 +369,7 @@ def train_vqa_model(gpu, ngpus_per_node, args):
                           gaccum=args.gaccum)
     
     if args.distributed:
-        utils.cleanup()
+        parallel.cleanup()
 
 
 def main(_):

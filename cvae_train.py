@@ -7,11 +7,12 @@ import functools
 import warnings
 import imageio
 import shutil
+from seq2seq import hlog
 
 import numpy as np
 import torch
 
-from absl import app, flags, logging
+from absl import app, flags
 from tqdm import tqdm
 
 from torch import optim
@@ -66,10 +67,11 @@ def evaluate_cvae(model,loader):
 def train_cvae():
     assert FLAGS.vae_path != ""
 
-    train, val, test = get_data()
-    vis_folder = utils.flags_to_path()
+    train, val, test = get_data(datatype=FLAGS.datatype,
+                                dataroot=FLAGS.dataroot)
+    vis_folder = utils.flags_to_path(FLAGS)
     os.makedirs(vis_folder, exist_ok=True)
-    logging.info("vis folder: %s", vis_folder)
+    hlog.log("vis folder: %s" % vis_folder)
 
     if FLAGS.test:
         model = torch.load(FLAGS.model_path)
@@ -179,11 +181,11 @@ def train_cvae():
             if i == 10 or (i+1) % 100 == 0:
                 model.eval()
                 with torch.no_grad():
-                    logging.info('%d iterations', (i+1))
-                    logging.info('%.6f train loss', (train_loss / cnt))
+                    hlog.log('%d iterations' % (i+1))
+                    hlog.log('%.6f train loss' % (train_loss / cnt))
                     val_recon, val_loss = evaluate_cvae(model, test_loader)
-                    logging.info('val_recon_error: %.6f', val_recon)
-                    logging.info('val_loss: %.6f', val_loss)
+                    hlog.log('val_recon_error: %.6f' % val_recon)
+                    hlog.log('val_loss: %.6f' % val_loss)
                     T = torchvision.transforms.ToPILImage(mode=train.color)
                     test_iter = iter(test_loader)
                     for j in range(5):
@@ -201,7 +203,7 @@ def train_cvae():
                         res = torch.cat((recon, img), 0).clip_(0, 1)
                         T(make_grid(encodings, nrow=encodings.shape[0]//3)).convert("RGB").save(os.path.join(vis_folder, f"{i}_{j}_encodings.png"))
                         T(make_grid(res, nrow=res.shape[0]//2)).convert("RGB").save(os.path.join(vis_folder, f"{i}_{j}.png"))
-                        logging.info("saved")
+                        hlog.log("saved")
                 model.train()
                 model.vqvae.eval()
         torch.save(model, os.path.join(vis_folder, f"model.pt"))
@@ -209,23 +211,23 @@ def train_cvae():
     model.eval()
     with torch.no_grad():
         val_recon, val_loss = evaluate_cvae(model, test_loader)
-        logging.info('val_recon_error: %.6f', val_recon)
-        logging.info('val_loss: %.6f', val_loss)
+        hlog.log('val_recon_error: %.6f' % val_recon)
+        hlog.log('val_loss: %.6f' % val_loss)
         T = torchvision.transforms.ToPILImage(mode=train.color)
         test_iter = iter(test_loader)
         for j in range(5):
             cmd, img, _ = next(test_iter)
             cmd = cmd.to(utils.device)
             img = img.to(utils.device)
-            logging.info("sampling")
+            hlog.log("sampling")
             recon, *_ = model.predict(cmd, top_k=10, sample=True)
-            logging.info("sampled")
+            hlog.log("sampled")
             recon = recon.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
             img = img.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
             res = torch.cat((recon, img), 0).clip_(0, 1)
-            logging.info("saving samples")
+            hlog.log("saving samples")
             T(make_grid(res, nrow=res.shape[0]//2)).convert("RGB").save(os.path.join(vis_folder, f"eval_{j}.png"))
-            logging.info("saved")
+            hlog.log("saved")
 
 
 def main(_):

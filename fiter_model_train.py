@@ -2,11 +2,11 @@ import os
 import functools
 import imageio
 import shutil
-
+from seq2seq import hlog
 import numpy as np
 import torch
 
-from absl import app, flags, logging
+from absl import app, flags
 from tqdm import tqdm
 
 from torch import optim
@@ -71,7 +71,7 @@ def train_filter_model(model,
         optimizer = optim.Adam(model.parameters(), lr=lr)
 
     main_worker = rank % ngpus_per_node == 0
-    logging.info(ngpus_per_node)
+    hlog.log(ngpus_per_node)
 
     if distributed:
         train_sampler = DistributedSampler(train)
@@ -102,11 +102,11 @@ def train_filter_model(model,
             target_beta = model_object.vae.beta
             model_object.vae.beta = 0.0
             kl_rate = 4*(target_beta / (epoch))
-            logging.info(f"kl rate: {kl_rate}")
+            hlog.log(f"kl rate: {kl_rate}")
         if decoder_reset != -1:
             variational = False
 
-    writer = utils.get_tensorboard_writer()
+    writer = utils.get_tensorboard_writer(vis_folder)
 
     for i in range(start_epoch, epoch):
 
@@ -143,7 +143,7 @@ def train_filter_model(model,
                                  f"Epoch {i}, Avg Loss (Train): %.4f, N: %d" %
                                  (total_loss/total_item, total_item))
 
-                if hasattr(logging, 'tb_writer'):
+                if hasattr(hlog, 'tb_writer'):
                     scalars = dict((k, v.mean().item())
                                    for (k, v) in scalars.items())
                     writer.add_scalars('Train/Loss', scalars,
@@ -155,7 +155,7 @@ def train_filter_model(model,
             model = model_object
             model.cpu()
             model.reset_decoder_parameters()
-            logging.info("Resetting model decoder...")
+            hlog.log("Resetting model decoder...")
             if ngpus_per_node > 0:
                 model = torch.nn.DataParallel(model).cuda()
                 model_object = model.module
@@ -170,7 +170,7 @@ def train_filter_model(model,
                                         target_beta)
 
         if main_worker and ((i+1) % visualize_every == 0 or i == 0):
-            logging.info(f"Epoch {i} (Train): %.4f", total_loss / total_item)
+            hlog.log(f"Epoch {i} (Train): %.4f" % (total_loss / total_item))
             model.eval()
             annotations = train.annotations
             reannotations = [{'text': a['text'].replace('blue', 'green'),
@@ -347,10 +347,10 @@ def filter_model(gpu, ngpus_per_node, args):
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
 
-    train, val, test = get_data()
-    vis_folder = utils.flags_to_path()
+    train, val, test = get_data(datatype=args.datatype, dataroot=args.dataroot)
+    vis_folder = utils.flags_to_path(args)
     os.makedirs(vis_folder, exist_ok=True)
-    logging.info("vis folder: %s", vis_folder)
+    hlog.log("vis folder: %s" % vis_folder)
 
     if args.lex_vae_type == 'VAE':
         vae = VAE(3,
@@ -412,7 +412,7 @@ def filter_model(gpu, ngpus_per_node, args):
                        decoder_reset=args.decoder_reset)
 
     if args.distributed:
-        utils.cleanup()
+        parallel.cleanup()
 
 
 def main(_):

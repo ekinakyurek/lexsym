@@ -12,7 +12,7 @@ import matplotlib.ticker as plticker
 import torchvision.transforms.functional as TF
 import os
 from absl import flags
-from absl import logging
+from seq2seq import hlog
 from torch.utils.tensorboard import SummaryWriter
 from seq2seq.src import NoamLR
 FLAGS = flags.FLAGS
@@ -197,18 +197,6 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = True
 
 
-def init_process(rank=0, size=1, backend='nccl', init_method="tcp://127.0.0.1:23456"):
-    """ Initialize the distributed environment. """
-    torch.distributed.init_process_group(backend,
-                                         rank=rank,
-                                         world_size=size,
-                                         init_method=init_method)
-
-
-def cleanup():
-    torch.distributed.destroy_process_group()
-
-
 def worker_init_fn(worker_id, rank=0):
     np.random.seed(np.random.get_state()[1][0] + worker_id + rank)
 
@@ -224,7 +212,7 @@ def save_checkpoint(state, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
 
 
-def flags_to_path():
+def flags_to_path(FLAGS):
     root = os.path.join(FLAGS.vis_root, FLAGS.datatype, FLAGS.modeltype)
 
     if "VQVAE" in FLAGS.modeltype:
@@ -248,16 +236,11 @@ def flags_to_path():
     return path
 
 
-def get_tensorboard_writer():
-    path = flags_to_path()
-    if not hasattr(logging, 'tb_writer'):
-        logging.tb_writer = SummaryWriter(path)
-    return logging.tb_writer
+def get_tensorboard_writer(path):
+    if not hasattr(hlog, 'tb_writer'):
+        hlog.tb_writer = SummaryWriter(path)
+    return hlog.tb_writer
 
-
-def set_logging_format(format='%(asctime)s [%(filename)s:%(lineno)d] %(message)s'):
-    logging._absl_handler.setFormatter(
-        logging.logging.Formatter(format, "%H:%M:%S"))
 
 
 def flags_to_args():
