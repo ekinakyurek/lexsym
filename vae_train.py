@@ -132,7 +132,7 @@ def train_vae_model(model,
         train_sampler.set_epoch(0)  # FIX
     train_iter = iter(train_loader)
     model.train()
-    for i in tqdm(range(start_iter, n_iter * gaccum)):
+    for i in range(start_iter, n_iter * gaccum):
         try:
             cmd, img, _ = next(train_iter)
         except StopIteration:

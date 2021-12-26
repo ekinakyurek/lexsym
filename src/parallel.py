@@ -36,6 +36,26 @@ flags.DEFINE_bool('multiprocessing_distributed', False,
                        'multi node data parallel training')
 
 
+def get_dist_env():
+    if 'OMPI_COMM_WORLD_SIZE' in os.environ:
+        world_size = int(os.getenv('OMPI_COMM_WORLD_SIZE'))
+    else:
+        world_size = int(os.getenv('SLURM_NTASKS'))
+
+    if 'OMPI_COMM_WORLD_RANK' in os.environ:
+        global_rank = int(os.getenv('OMPI_COMM_WORLD_RANK'))
+    else:
+        global_rank = int(os.getenv('SLURM_PROCID'))
+    init_meth = ''
+    if 'MASTER_ADDR'in os.environ:
+        init_meth ='tcp://'+ os.getenv('MASTER_ADDR')
+    if 'MASTER_PORT'in os.environ:
+        init_meth = init_meth + ':' + os.getenv('MASTER_PORT')
+    print("init method: ", init_meth)
+    print("word_size: ", world_size)
+    print("global rank: ", global_rank)
+    return global_rank, world_size, init_meth
+
 
 def run_parallel(runner_fn):
     writer = utils.get_tensorboard_writer(utils.flags_to_path(FLAGS))
@@ -48,9 +68,15 @@ def run_parallel(runner_fn):
         hlog.log('You have chosen a specific GPU. This '
                  'will completely disable data parallelism.')
 
-    if FLAGS.dist_url == "env://" and FLAGS.world_size == -1:
-        FLAGS.world_size = int(os.environ["WORLD_SIZE"])
-
+    # if FLAGS.dist_url == "env://" and FLAGS.world_size == -1:
+    #     FLAGS.world_size = int(os.environ["WORLD_SIZE"])
+    
+    global_rank, world_size, init_meth = get_dist_env()
+    
+    FLAGS.world_size = world_size
+    FLAGS.rank = global_rank
+    FLAGS.dist_url = init_meth
+    
     FLAGS.distributed = FLAGS.world_size > 1 or FLAGS.multiprocessing_distributed
 
     ngpus_per_node = torch.cuda.device_count()
@@ -73,8 +99,10 @@ def run_parallel(runner_fn):
                                     nprocs=ngpus_per_node,
                                     args=(ngpus_per_node, args))
     else:
+        if args.distributed and args.gpu is None:
+            args.gpu = args.rank % ngpus_per_node
         # Simply call main_worker function
-        runner_fn(FLAGS.gpu, ngpus_per_node, args)
+        runner_fn(args.gpu, ngpus_per_node, args)
 
     writer.close()
 
@@ -88,9 +116,10 @@ def distribute(model, args):
             # When using a single GPU per process and per
             # DistributedDataParallel, we need to divide the batch size
             # ourselves based on the total number of GPUs we have
-            args.n_batch = int(args.n_batch / args.ngpus_per_node)
+            args.n_batch = int(args.n_batch / args.world_size)
+            print("n_batch_per_process: ", args.n_batch)
             args.n_workers = int((args.n_workers + args.ngpus_per_node - 1) / args.ngpus_per_node)
-            model = DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
+            model = DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True, output_device=None)
         else:
             model.cuda()
             # DistributedDataParallel will divide and allocate batch_size to all
@@ -126,8 +155,8 @@ def init_distributed(args):
         print("Use GPU: {} for training".format(args.gpu))
 
     if args.distributed:
-        if args.dist_url == "env://" and args.rank == -1:
-            args.rank = int(os.environ["RANK"])
+        # if args.dist_url == "env://" and args.rank == -1:
+        #     args.rank = int(os.environ["RANK"])
         if args.multiprocessing_distributed:
             # For multiprocessing distributed training, rank needs to be the
             # global rank among all the processes

@@ -1,25 +1,42 @@
 #!/bin/bash
 #SBATCH --job-name=clevr
 #SBATCH --time=58:00:00
-#SBATCH --cpus-per-task=12
-#SBATCH --ntasks-per-node=1
-#SBATCH --nodes=1
+#SBATCH --cpus-per-task=10
+#SBATCH --ntasks-per-node=2
+#SBATCH --nodes=2
 #SBATCH --qos=high
 #SBATCH --constrain=xeon-g6
-#SBATCH --gres=gpu:volta:1
-#SBATCH --array=1-8
+#SBATCH --gres=gpu:volta:2
 
 
-n_batch=1024
+source /etc/profile
+module load cuda/11.1
+module load mpi/openmpi-4.1.1
+module load nccl/2.8.3-cuda11.1
+
+export MPI_FLAGS="--tag-output --bind-to socket -map-by core -mca btl ^openib -mca pml ob1 -x PSM2_GPUDIRECT=1 -x NCCL_NET_GDR_LEVEL=5 -x NCCL_P2P_LEVEL=5 -x NCCL_NET_GDR_READ=1"
+
+# Set some environment variables needed by torch.distributed 
+export MASTER_ADDR=$(hostname -s)
+# Get unused port
+export MASTER_PORT=$(python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+
+echo "MASTER_ADDR : ${MASTER_ADDR}"
+echo "MASTER_PORT : ${MASTER_PORT}"
+
+# Do not use the torch.distributed.launch utility. Use mpirun as shown below
+# to launch your code. The file torch_test.py has additional setup code needed to the
+# distributed training capability 
+
+n_batch=512
 h_dim=128
 seed=0
 modeltype=VQVAE
 datatype=clevr
 i=0
 beta=1.0
-vis_root='vis_clip'
-vqvae_root='vis_clip'
-CUDA_VISIBLE_DEVICES=7,8,10,11
+vis_root='vis_test'
+vqvae_root='vis_test'
 imgsize="128,128"
 n_iter=20000
 
@@ -30,6 +47,20 @@ ulimit -x unlimited
 eval "$(conda shell.bash hook)"
 conda activate generative
 
+# # master_addr=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
+# # master_addr=${master_addr//[/}
+# # export MASTER_ADDR=${master_addr//]/}
+# sleep 20
+# export MASTER_ADDR=`squeue | grep "eakyurek" | tail -n 1 | awk '{print $8}'`
+# MASTER_ADDR='172.31.130.84'
+# echo $MASTER_ADDR
+# # if [[ $LLSUB_RANK == '1' ]]
+# # then
+# #     MASTER_ADDR='127.0.0.1'
+# # fi
+
+# echo $MASTER_ADDR
+# export NCCL_SOCKET_IFNAME='ens2f0'
 
 for n_latent in 64; do
   for n_codes in 32; do
@@ -38,7 +69,8 @@ for n_latent in 64; do
         # if [[ $i -eq $1 ]]; then
         exp_folder="${vis_root}/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/logs"
         mkdir -p $exp_folder
-        PYTHONHASHSEED=${seed} python -u vae_train.py \
+
+        PYTHONHASHSEED=0 mpirun ${MPI_FLAGS} python -u vae_train.py \
         --seed ${seed} \
         --n_batch ${n_batch} \
         --n_latent ${n_latent} \
@@ -52,8 +84,9 @@ for n_latent in 64; do
         --n_workers 16 \
         --vis_root ${vis_root} \
         --dataroot "data/clevr" \
-        --dist_url 'tcp://127.0.0.1:6663' --dist_backend 'nccl' --multiprocessing_distributed --world_size 1 --rank 0 \
-        --visualize_every 1000 # > $exp_folder/eval.out 2> $exp_folder/eval.err
+        --world_size 4 \
+        --dist_backend 'nccl' \
+        --visualize_every 1000  > $exp_folder/eval.${LLSUB_RANK}.out 2> $exp_folder/eval.${LLSUB_RANK}.err
       # fi
     done
   done
