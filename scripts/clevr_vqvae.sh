@@ -30,16 +30,15 @@ echo "MASTER_PORT : ${MASTER_PORT}"
 
 n_batch=512
 h_dim=128
-seed=0
+seed=2
 modeltype=VQVAE
 datatype=clevr
 i=0
 beta=1.0
-vis_root='vis_test'
-vqvae_root='vis_test'
+vis_root='vis_test_seed_2'
+vqvae_root='vis_test_seed_2'
 imgsize="128,128"
-n_iter=20000
-
+n_iter=100000
 
 ulimit -n 10000
 ulimit -x unlimited
@@ -47,20 +46,7 @@ ulimit -x unlimited
 eval "$(conda shell.bash hook)"
 conda activate generative
 
-# # master_addr=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
-# # master_addr=${master_addr//[/}
-# # export MASTER_ADDR=${master_addr//]/}
-# sleep 20
-# export MASTER_ADDR=`squeue | grep "eakyurek" | tail -n 1 | awk '{print $8}'`
-# MASTER_ADDR='172.31.130.84'
-# echo $MASTER_ADDR
-# # if [[ $LLSUB_RANK == '1' ]]
-# # then
-# #     MASTER_ADDR='127.0.0.1'
-# # fi
-
-# echo $MASTER_ADDR
-# export NCCL_SOCKET_IFNAME='ens2f0'
+LLSUB_RANK=${SLURM_PROCID}
 
 for n_latent in 64; do
   for n_codes in 32; do
@@ -70,7 +56,7 @@ for n_latent in 64; do
         exp_folder="${vis_root}/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}/logs"
         mkdir -p $exp_folder
 
-        PYTHONHASHSEED=0 mpirun ${MPI_FLAGS} python -u vae_train.py \
+        PYTHONHASHSEED=${seed} mpirun ${MPI_FLAGS} python -u vae_train.py \
         --seed ${seed} \
         --n_batch ${n_batch} \
         --n_latent ${n_latent} \
@@ -86,7 +72,7 @@ for n_latent in 64; do
         --dataroot "data/clevr" \
         --world_size 4 \
         --dist_backend 'nccl' \
-        --visualize_every 1000  > $exp_folder/eval.${LLSUB_RANK}.out 2> $exp_folder/eval.${LLSUB_RANK}.err
+        --visualize_every 10000  > $exp_folder/eval.${LLSUB_RANK}.out 2> $exp_folder/eval.${LLSUB_RANK}.err
       # fi
     done
   done

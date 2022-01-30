@@ -41,7 +41,9 @@ class VQA(nn.Module):
         self.vqvae = VectorQuantizedVAE(input_dim, dim, edim, **kwargs)
         self.vocab = vocab
         self.rnn_dim = rnn_dim
-        self.outlen = self.vqvae.latent_shape[1]*self.vqvae.latent_shape[2]
+        self.latent_shape = self.vqvae.latent_shape
+        self.n_codes = self.vqvae.n_codes
+        self.outlen = self.latent_shape[1]*self.latent_shape[2]
 
         self.encoder = nn.TransformerEncoder(
                             nn.TransformerEncoderLayer(
@@ -55,11 +57,11 @@ class VQA(nn.Module):
 
         self.q_pos_embed = PositionalEncoding(rnn_dim, max_len=max_len)  # rnn_dim
 
-        self.img_embed = nn.Embedding(self.vqvae.n_codes, rnn_dim)  # rnn_dim
+        self.img_embed = nn.Embedding(self.n_codes, rnn_dim)  # rnn_dim
         self.img_posx_embed = PositionalEncoding(rnn_dim // 2,
-                                                 max_len=self.vqvae.latent_shape[1])
+                                                 max_len=self.latent_shape[1])
         self.img_posy_embed = PositionalEncoding(rnn_dim // 2,
-                                                 max_len=self.vqvae.latent_shape[2],
+                                                 max_len=self.latent_shape[2],
                                                  transpose=True)
 
         self.answer_proj = nn.Linear(rnn_dim, len(out_vocab))  # rnn_dim
@@ -85,8 +87,8 @@ class VQA(nn.Module):
             enc_T = img.transpose(0, 1)
 
         L, _ = enc_T.shape
-        posx_embed = self.img_posx_embed.pe[np.arange(L) % self.vqvae.latent_shape[1]]
-        posy_embed = self.img_posy_embed.pe[np.arange(L) // self.vqvae.latent_shape[1]]
+        posx_embed = self.img_posx_embed.pe[np.arange(L) % self.latent_shape[1]]
+        posy_embed = self.img_posy_embed.pe[np.arange(L) // self.latent_shape[1]]
         out_pos_embed = torch.cat((posx_embed, posy_embed), dim=-1)
         img_embed = self.img_embed(enc_T) + out_pos_embed
         img_mask = torch.zeros_like(img_embed[:, :, 0])

@@ -92,13 +92,13 @@ def train_vae_model(model,
     if optimizer is None:
         optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    main_worker = rank % ngpus_per_node == 0
+    main_worker = rank == 0 if distributed else True
+    
+    print(f"rank: {rank} starts training")
+    
     hlog.log(ngpus_per_node)
 
-    if distributed:
-        train_sampler = DistributedSampler(train, shuffle=True)
-    else:
-        train_sampler = None
+    train_sampler = DistributedSampler(train, shuffle=True, seed=0) if distributed else None
 
     worker_init_fn = functools.partial(utils.worker_init_fn, rank=rank)
 
@@ -108,7 +108,7 @@ def train_vae_model(model,
                               collate_fn=train.collate,
                               sampler=train_sampler,
                               num_workers=n_workers,
-                              drop_last=gaccum > 1,
+                              drop_last=gaccum > 1 or (train_sampler is not None),
                               worker_init_fn=worker_init_fn)
     
     test_loader = DataLoader(test,
@@ -129,7 +129,7 @@ def train_vae_model(model,
     cnt = 0.
     epoch_count = 0
     if train_sampler:
-        train_sampler.set_epoch(0)  # FIX
+        train_sampler.set_epoch(epoch_count)  # FIX
     train_iter = iter(train_loader)
     model.train()
     for i in range(start_iter, n_iter * gaccum):
@@ -137,7 +137,7 @@ def train_vae_model(model,
             cmd, img, _ = next(train_iter)
         except StopIteration:
             epoch_count += 1
-            if train_sampler:
+            if train_sampler: 
                 train_sampler.set_epoch(epoch_count)  # FIX
             print("Setting up the iterator")
             train_iter = iter(train_loader)
@@ -145,12 +145,16 @@ def train_vae_model(model,
             cmd, img, _ = next(train_iter)
 
         cmd = cmd.transpose(0, 1)
+               
+        if i == 0:
+            print(f"rank: {rank}, batch size {img.shape[0]}, first cmd: {cmd[0].detach().numpy()}")
+
         if gpu is not None:
             cmd = cmd.cuda(gpu, non_blocking=True)
             img = img.cuda(gpu, non_blocking=True)
             
         if i % gaccum == 0:
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
         loss = model(**dict(img=img, cmd=cmd, only_loss=True))
         loss = loss.mean() / gaccum

@@ -46,11 +46,14 @@ def get_dist_env():
         global_rank = int(os.getenv('OMPI_COMM_WORLD_RANK'))
     else:
         global_rank = int(os.getenv('SLURM_PROCID'))
+      
     init_meth = ''
-    if 'MASTER_ADDR'in os.environ:
-        init_meth ='tcp://'+ os.getenv('MASTER_ADDR')
-    if 'MASTER_PORT'in os.environ:
+    if 'MASTER_ADDR' in os.environ:
+        init_meth = 'tcp://' + os.getenv('MASTER_ADDR')
+     
+    if 'MASTER_PORT' in os.environ:
         init_meth = init_meth + ':' + os.getenv('MASTER_PORT')
+
     print("init method: ", init_meth)
     print("word_size: ", world_size)
     print("global rank: ", global_rank)
@@ -58,8 +61,6 @@ def get_dist_env():
 
 
 def run_parallel(runner_fn):
-    writer = utils.get_tensorboard_writer(utils.flags_to_path(FLAGS))
-
     if FLAGS.seed is not None:
         utils.set_seed(FLAGS.seed + FLAGS.rank)
         hlog.log(f"Setting seed to {FLAGS.seed}")
@@ -67,9 +68,6 @@ def run_parallel(runner_fn):
     if FLAGS.gpu is not None:
         hlog.log('You have chosen a specific GPU. This '
                  'will completely disable data parallelism.')
-
-    # if FLAGS.dist_url == "env://" and FLAGS.world_size == -1:
-    #     FLAGS.world_size = int(os.environ["WORLD_SIZE"])
     
     global_rank, world_size, init_meth = get_dist_env()
     
@@ -78,21 +76,23 @@ def run_parallel(runner_fn):
     FLAGS.dist_url = init_meth
     
     FLAGS.distributed = FLAGS.world_size > 1 or FLAGS.multiprocessing_distributed
+    print(f"Distributed={FLAGS.distributed}")
 
     ngpus_per_node = torch.cuda.device_count()
 
     args = utils.flags_to_args()
+    
+    writer = None
+    if (args.distributed and args.rank == 0) or not args.distributed:
+        writer = utils.get_tensorboard_writer(utils.flags_to_path(FLAGS))
 
     print(json.dumps(args._initial_dict, indent=2))
-
-    # st_args = json.dumps(args._initial_dict, indent=2).replace("\n", "   \n")
-    #
-    # writer.add_text("FLAGS", st_args)
 
     if args.multiprocessing_distributed:
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
         args.world_size = ngpus_per_node * args.world_size
+        print(f"args.world_size is changed to {args.world_size}")
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
         torch.multiprocessing.spawn(runner_fn,
@@ -101,25 +101,30 @@ def run_parallel(runner_fn):
     else:
         if args.distributed and args.gpu is None:
             args.gpu = args.rank % ngpus_per_node
+            print(f"distributed is setting gpu to {args.gpu}")
         # Simply call main_worker function
         runner_fn(args.gpu, ngpus_per_node, args)
 
-    writer.close()
+    if writer is not None:
+        writer.close()
 
 
 def distribute(model, args):
     if args.distributed:
         if args.gpu is not None:
+            print(f"Distributed and using single gpu for each process, current gpu: {args.gpu}")
             torch.cuda.set_device(args.gpu)
             model.cuda(args.gpu)
-            print('single gpu per process')
             # When using a single GPU per process and per
             # DistributedDataParallel, we need to divide the batch size
             # ourselves based on the total number of GPUs we have
             args.n_batch = int(args.n_batch / args.world_size)
-            print("n_batch_per_process: ", args.n_batch)
+            print("n_batch_per_process is set to: ", args.n_batch)
             args.n_workers = int((args.n_workers + args.ngpus_per_node - 1) / args.ngpus_per_node)
-            model = DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True, output_device=None)
+            print("n_workers_per_process is set to: ", args.n_workers)
+            model = DistributedDataParallel(model,
+                                            device_ids=[args.gpu],
+                                            output_device=None)
         else:
             model.cuda()
             # DistributedDataParallel will divide and allocate batch_size to all
@@ -139,6 +144,7 @@ def distribute(model, args):
 
 def init_process(rank=0, size=1, backend='nccl', init_method="tcp://127.0.0.1:23456"):
     """ Initialize the distributed environment. """
+    print(f"Init process: rank: {rank}, size: {size}, method: {init_method}")
     dist.init_process_group(backend,
                             rank=rank,
                             world_size=size,
@@ -146,6 +152,7 @@ def init_process(rank=0, size=1, backend='nccl', init_method="tcp://127.0.0.1:23
 
 
 def cleanup():
+    print("Cleaning process group")
     dist.destroy_process_group()
 
 

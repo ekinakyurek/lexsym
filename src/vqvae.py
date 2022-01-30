@@ -107,6 +107,7 @@ class VectorQuantizedVAE(nn.Module):
                 return_z=False,
                 only_loss=False,
                 ):
+        
         if cmd is not None:
             cmd = cmd.transpose(0, 1)
 
@@ -162,16 +163,17 @@ class VectorQuantizerEMA(nn.Module):
 
         self._embedding_dim = latent_shape[0]
         self._num_embeddings = n_codes
-
-        self._embedding = nn.Embedding(self._num_embeddings, self._embedding_dim)
-        self._embedding.weight.data.uniform_(-1/self._num_embeddings, 1/self._num_embeddings)
         self._commitment_cost = cc
-
-        self.register_buffer('_ema_cluster_size', torch.zeros(n_codes))
-        self._ema_w = nn.Parameter(self._embedding.weight.clone())
         self._decay = decay
-
         self._epsilon = epsilon
+        
+        _embedding = torch.zeros(self._num_embeddings, self._embedding_dim)
+        _embedding.uniform_(-1/self._num_embeddings, 1/self._num_embeddings)
+        
+        self.register_buffer('_embedding', _embedding)
+        self.register_buffer('_ema_cluster_size', torch.zeros(n_codes))
+        self.register_buffer('_ema_w', _embedding.clone())
+     
 
     def forward(self, inputs, cmds=None):
         # convert inputs from BCHW -> BHWC
@@ -184,14 +186,14 @@ class VectorQuantizerEMA(nn.Module):
         # Calculate distances
         distances = (
             flatten.pow(2).sum(1, keepdim=True)
-            - 2 * flatten @ self._embedding.weight.t()
-            + self._embedding.weight.pow(2).sum(1, keepdim=True).t()
+            - 2 * flatten @ self._embedding.t()
+            + self._embedding.pow(2).sum(1, keepdim=True).t()
         )
 
         # Encoding
         encoding_indices = torch.argmin(distances, dim=1)
         encodings = encoding_indices.view(input_shape[0:3])
-        quantized = self._embedding(encodings)
+        quantized = F.embedding(encodings, self._embedding)
         # Inefficient version of the above after materializing one hot embeddings:
         # quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
 
@@ -204,8 +206,9 @@ class VectorQuantizerEMA(nn.Module):
         # # Use EMA to update the embedding vectors
         if self.training:
             one_hot = torch.zeros(encoding_indices.shape[0],
-                                  self._num_embeddings, 
+                                  self._num_embeddings,
                                   device=inputs.device)
+            
             one_hot.scatter_(1, encoding_indices.unsqueeze(1), 1)
 
             embed_onehot_sum = one_hot.sum(dim=0)
@@ -223,7 +226,7 @@ class VectorQuantizerEMA(nn.Module):
                 (self._ema_cluster_size + self._epsilon) / (n + self._num_embeddings * self._epsilon) * n
             )
 
-            self._embedding.weight.data.copy_(self._ema_w / self._ema_cluster_size.unsqueeze(1))
+            self._embedding.data.copy_(self._ema_w / self._ema_cluster_size.unsqueeze(1))
 
         # Loss
         e_latent_loss = F.mse_loss(quantized.detach(), inputs)
@@ -235,8 +238,8 @@ class VectorQuantizerEMA(nn.Module):
         # Straight Through Estimator
         quantized = inputs + (quantized - inputs).detach()
         nll = -(torch.numel(encodings) * math.log(self._num_embeddings))
-        #nll = -torch.log(avg_probs + 1e-10).sum()
-        #nll = torch.ones(1) # TODO
+        # nll = -torch.log(avg_probs + 1e-10).sum()
+        # nll = torch.ones(1) # TODO
 
         # convert quantized from BHWC -> BCHW
         quantized = quantized.permute(0, 3, 1, 2).contiguous()
@@ -254,7 +257,7 @@ class VectorQuantizerEMA(nn.Module):
 
     def sample(self, B=1, cmd=None):
         encodings = np.random.choice(np.arange(self._num_embeddings), (B, *self._latent_shape[1:]))
-        encodings = torch.from_numpy(encodings).to(self._embedding.weight.device)
-        quantized = self._embedding(encodings)
+        encodings = torch.from_numpy(encodings).to(self._embedding.device)
+        quantized = F.embedding(encodings, self._embedding)
         quantized = quantized.permute(0, 3, 1, 2).contiguous()
         return quantized, encodings

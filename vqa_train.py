@@ -146,11 +146,12 @@ def train_vqa_model_model(model,
             
         scheduler = NoamLR(optimizer, rnn_dim, warmup_steps=warmup_steps)
 
-    main_worker = rank % ngpus_per_node == 0
+    main_worker = rank == 0 if distributed else True
+    print(f"rank: {rank} starts training")
     
     hlog.log(ngpus_per_node)
 
-    train_sampler = DistributedSampler(train, shuffle=True) if distributed else None
+    train_sampler = DistributedSampler(train, shuffle=True, seed=0) if distributed else None
  
     worker_init_fn = functools.partial(utils.worker_init_fn, rank=rank)
 
@@ -160,7 +161,7 @@ def train_vqa_model_model(model,
                               collate_fn=train.collate,
                               sampler=train_sampler,
                               num_workers=n_workers,
-                              drop_last=gaccum > 1,
+                              drop_last=gaccum > 1 or (train_sampler is not None),
                               worker_init_fn=worker_init_fn)
 
     test_loader = DataLoader(test,
@@ -177,16 +178,18 @@ def train_vqa_model_model(model,
                             num_workers=n_workers,
                             worker_init_fn=utils.worker_init_fn)
 
-    writer = utils.get_tensorboard_writer(vis_folder)
+    if main_worker:
+        writer = utils.get_tensorboard_writer(vis_folder)
 
-    total, nll, epoch = [0.] * 3
+    total, nll = 0., 0.
+    epoch = 0
     
     if train_sampler:
-        train_sampler.set_epoch(0)  # FIX
+        train_sampler.set_epoch(epoch)  # FIX
         
     train_iter = iter(train_loader)
     model.train()
-    for i in tqdm(range(start_iter, n_iter * gaccum)):
+    for i in range(start_iter, n_iter * gaccum):
         # Get data
         try:
             question, img, answer, files = next(train_iter)
@@ -218,7 +221,7 @@ def train_vqa_model_model(model,
             answer = answer.cuda(gpu, non_blocking=True)
 
         if i % gaccum == 0:
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             
         # Take grad step on loss
         loss = model(**dict(question=question, img=img, answer=answer))
@@ -244,7 +247,8 @@ def train_vqa_model_model(model,
             with torch.no_grad():
                 hlog.log('%d gradient updates' % ((i+1) / gaccum))
                 hlog.log('Train Loss: %.6f' % (nll / total))
-                writer.add_scalar('Loss/Train', nll/total, i+1)
+                if writer is not None:
+                    writer.add_scalar('Loss/Train', nll/total, i+1)
                 model.eval()
                 val_nll, val_acc = evaluate_model(model,
                                                   val_loader,
@@ -279,7 +283,6 @@ def train_vqa_model_model(model,
 
 def train_vqa_model(gpu, ngpus_per_node, args):
     assert args.vae_path is not None
-    
     vis_folder = utils.flags_to_path(args)
     os.makedirs(vis_folder, exist_ok=True)
     hlog.log("vis folder: %s" % vis_folder)
@@ -287,6 +290,7 @@ def train_vqa_model(gpu, ngpus_per_node, args):
     args.gpu = gpu
     args.ngpus_per_node = ngpus_per_node
     parallel.init_distributed(args)
+    
     img_size = tuple(map(int, args.imgsize.split(',')))
     
     code_cache = lexicon = None
@@ -330,19 +334,21 @@ def train_vqa_model(gpu, ngpus_per_node, args):
     else:
         raise ValueError(f"Not supported model type {args.modeltype}")
 
-    
     optimizer = None
     scheduler = None
     args.start_iter = 0
     
-    if args.resume is not None and code_cache is None:
+    if code_cache is None:
         args.resume = args.vae_path
         vqvae = nn.DataParallel(model.vqvae)
         utils.resume(vqvae, args, mark='iter', load_optims=False)
         model.vqvae = vqvae.module
         model = parallel.distribute(model, args)
         args.start_iter = 0
-    elif args.resume is not None:
+    else:
+        model.vqvae = None
+        
+    if args.resume is not None:
         args.start_iter = 0
         model = parallel.distribute(model, args)
         optimizer, scheduler = utils.resume(model, args, mark='iter')

@@ -58,6 +58,7 @@ def img2code(model,
                             collate_fn=train.collate,
                             num_workers=n_workers)
 
+    model.eval()
     for (split, loader) in zip(("train", "test", "val"), (train_loader, test_loader, val_loader)):
         path = os.path.join(vis_folder, f"{split}_encodings.txt")
         generator = iter(loader)

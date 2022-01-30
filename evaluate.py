@@ -106,7 +106,7 @@ def exp_eval(prediction_files, dataroot):
     for k in evals[0].keys():
         eval_labels[k] = np.concatenate([eval[k] for eval in evals]) 
         metrics['mean'][k] = np.mean(eval_labels[k])
-        metrics['std'][k] = np.std(eval_labels[k])
+        metrics['std'][k] = np.std([np.mean(eval[k]) for eval in evals])
     
     return metrics, eval_labels
 
@@ -117,24 +117,22 @@ def main(_):
     results = {}
     x = PrettyTable()
     field_names_set = False
-    for dataroot in ("clevr", "original_clevr"):
+    for dataroot in ("original_clevr", "clevr"):
         if dataroot not in results:
             results[dataroot] = {}
-        for k in ("_", "_substitute_", "_no_swap_"):
-            if dataroot == "original_clevr" and k == "_substitute_":
-                continue
+        for k in ("_substitute_", "_no_swap_", "_"):
             prediction_files = []
             for seed in range(0, 4):
-                prediction_template = f"clip_exp{k}vqa_seed_{seed}_{dataroot}/clevr/VQA/beta_1.0_ldim_64_dim_128_lr_1.0/predictions_test_800000.txt"
+                prediction_template = f"vqa_exp_folder/clip_exp{k}vqa_seed_{seed}_{dataroot}/clevr/VQA/beta_1.0_ldim_64_dim_128_lr_1.0/predictions_test_800000.txt"
                 prediction_files.append(prediction_template)
                 
             exp_metrics, exp_labels = exp_eval(prediction_files, "data/"+dataroot)
-            results[dataroot][k] = exp_metrics['mean']
+            results[dataroot][k] = {'mean': exp_metrics['mean'], 'std': exp_metrics['std']}
             
             if not field_names_set:
-                x.field_names = ['data', 'model'] + list(results[dataroot][k].keys())
+                x.field_names = ['data', 'model'] + list(results[dataroot][k]['mean'].keys())
                 field_names_set = True
-            x.add_row([dataroot, k] + [str(round(results[dataroot][k][i], 3)) for i in x.field_names[2:]])
+            x.add_row([dataroot, k] + [str(round(100*results[dataroot][k]['mean'][i], 1)) + " \stderr{" + str(round(100*results[dataroot][k]['std'][i], 2)) + "}"   for i in x.field_names[2:]])
             print(x)
             
     print(x)
