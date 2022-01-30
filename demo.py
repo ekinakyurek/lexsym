@@ -41,7 +41,7 @@ def init_fn(_):
     args = utils.flags_to_args()
     vis_folder = utils.flags_to_path(args)
     img_size = tuple(map(int, args.imgsize.split(',')))
-    train, val, test = get_data(size=img_size)
+    train, val, test = get_data(size=img_size, img2code=True)
     os.makedirs(vis_folder, exist_ok=True)
     print("vis folder:", vis_folder)
 
@@ -91,14 +91,16 @@ def encode_next():
     recon = recon.clip_(0, 1)
     encodings = encodings.flatten().cpu().tolist()
     img = T(make_grid(recon)).convert("RGB")
-    return img2str(img), encodings
+    cmd = " ".join(train.vocab.decode(cmd.cpu().flatten().numpy()))
+    return img2str(img), encodings, cmd
 
 
 @app.route('/get_next', methods=['GET', 'POST'])
 def get_next():
-    img, encodings = encode_next()
+    img, encodings, QA = encode_next()
     data = {"img": img,
             "encodings": encodings,
+            "QA": QA,
             "matchings": app.config['MATCHINGS']}
     # print(data)
     return json.dumps(data)
@@ -119,32 +121,25 @@ def decode():
     img = T(make_grid(recon)).convert("RGB")
     return json.dumps({"img": img2str(img)})
 
-def get_dummy_question_answer():
-    vocab = Vocab()
-    answer_vocab = Vocab()
-    answer = question = "blue yellow red green brown gray purple cyan"
-    for word in question.split():
-        vocab.add(word)
-    for word in reversed(question.split()):
-        answer_vocab.add(word)
-    answer = torch.tensor(answer_vocab.encode(answer.split()))
-    question = torch.tensor(vocab.encode(question.split()))
-    return question, vocab, answer, answer_vocab
+
+def get_dummy_question_answer(QA):
+    QA = torch.tensor(train.vocab.encode(QA.split()))
+    return QA
 
 
-@app.route('/swap', methods=['GET', 'POST'])
+@app.route('/swap', methods=['POST'])
 def swap():
     encodings = np.array([int(request.form['cell'+str(i)]) for i in range(app.config['GRID_SIZE']**2)])
     encodings = torch.from_numpy(encodings)
     encodings = encodings.view(1, -1)
     print("Before swap (encodings):", encodings)
-    question, vocab, answer, answer_vocab = get_dummy_question_answer()
-    print("Before swap (questions):", vocab.decode(question.numpy()))
-    print("Before swap (answer):", answer_vocab.decode(answer.numpy()))
-    lexutils.random_swap(app.config['LEXICON'], question, vocab, answer, answer_vocab, encodings)
+    QA = get_dummy_question_answer(request.form['QA'])
+    print("Before swap:", request.form['QA'])
+    utils.set_seed(0)
+    lexutils.random_swap(app.config['LEXICON'], QA, train.vocab, QA.clone(), train.vocab, encodings)
     print("After swap:", encodings)
-    print("After swap (questions):", vocab.decode(question.numpy()))
-    print("After swap (answer):", answer_vocab.decode(answer.numpy()))
+    QA = " ".join(train.vocab.decode(QA.cpu().flatten().numpy()))
+    print("After swap:", QA)
     encodings = encodings.to(utils.device())
     quantized = model.codebook1._embedding(encodings)  # B,HW,C
     C = quantized.shape[-1]
@@ -154,7 +149,8 @@ def swap():
     recon = recon.clip_(0, 1)
     img = T(make_grid(recon)).convert("RGB")
     data = {"img": img2str(img),
-            "encodings": encodings.flatten().cpu().tolist()
+            "encodings": encodings.flatten().cpu().tolist(),
+            "QA": QA,
             }
     return json.dumps(data)
 
@@ -172,8 +168,10 @@ if __name__ == "__main__":
     generator = iter(test_loader)
     T = torchvision.transforms.ToPILImage(mode=train.color)
     app.config['VIS_FOLDER'] = vis_folder
-    app.config['DATA_FOLDER'] = os.path.join(test.root, "images", test.split)
+    app.config['DATA_FOLDER'] = os.path.join(train.root, "images", train.split)
     app.config['GRID_SIZE'] = model.latent_shape[1]
-    app.config['MATCHINGS'] = lexicon['lexicon']
+    lexicon['lexicon'] = {k: v for k, v in lexicon['lexicon'].items() if k in ("green", "red")}
+    lexicon['swapables'] = {k: ["green"] if k == "red" else ["red"]  for k, v in lexicon['swapables'].items() if k in ("green", "red")}
+    app.config['MATCHINGS'] = lexicon['lexicon'] 
     app.config['LEXICON'] = lexicon
     app.run(host='0.0.0.0', port=6632)

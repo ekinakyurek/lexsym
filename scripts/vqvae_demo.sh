@@ -5,8 +5,8 @@ seed=0
 modeltype=VQVAE
 datatype=clevr
 i=0
-vis_root="new_vqvaes/seed_1"
-CUDA_VISIBLE_DEVICES=11
+vis_root="clip_5_folders/clip_exp_img_seed_2_clevr"
+CUDA_VISIBLE_DEVICES=15
 for n_codes in 32; do
   for n_latent in 64; do
     for beta in 1.0; do

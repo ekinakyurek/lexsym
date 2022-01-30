@@ -11,10 +11,11 @@ flags.DEFINE_string("lexfile", default=None,
 flags.DEFINE_string("codefile", default=None,
                     help='qa and code files')
 
-
 def main(_):
     lexicon, inputs = lexutils.load_lexicon(FLAGS.lexfile, FLAGS.codefile)
+    
     filtered_lexicon, swapables = lexutils.filter_lexicon_v2(lexicon, inputs)
+    
     lex = {"lexicon": filtered_lexicon, "swapables": swapables}
     
     for k in list(lex["swapables"].keys()):
