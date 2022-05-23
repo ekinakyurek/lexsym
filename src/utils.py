@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import optim
 import math
 import io
 import random
@@ -10,17 +11,39 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as plticker
 import torchvision.transforms.functional as TF
 import os
+from absl import flags
+from seq2seq import hlog
+from torch.utils.tensorboard import SummaryWriter
+from seq2seq.src import NoamLR
+FLAGS = flags.FLAGS
+
+
+def device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
         try:
-            nn.init.xavier_uniform_(m.weight.data)
+            nn.init.normal_(m.weight.data, std=0.002)
             m.bias.data.fill_(0)
         except AttributeError:
             print("Skipping initialization of ", classname)
 
+
+def reset_parameters(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        try:
+            nn.init.normal_(m.weight.data, std=0.002)
+            m.bias.data.fill_(0)
+        except AttributeError:
+            print("Skipping initialization of ", classname)
+    elif classname.find('Linear') != -1:
+        m.reset_parameters()
+    elif classname.find('Embedding') != -1:
+        m.reset_parameters()
 
 class View(nn.Module):
     def __init__(self, *shape):
@@ -29,6 +52,29 @@ class View(nn.Module):
 
     def forward(self, x):
         return x.view(*self.shape)
+
+class Residual(nn.Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def forward(self, x):
+        return self.fn(x)
+
+
+class LambdaLayer(nn.Module):
+    def __init__(self, lambd):
+        super(LambdaLayer, self).__init__()
+        self.lambd = lambd
+        
+    def forward(self, *x):
+        return self.lambd(*x)
+
+
+def conv3x3(input_dim, output_dim, kernel_dim=3):
+    return Residual(nn.Sequential(
+                nn.Conv2d(input_dim, output_dim, kernel_dim, padding="same"),
+                nn.LeakyReLU(0.2)))
 
 
 class PositionalEncoding(nn.Module):
@@ -83,6 +129,7 @@ def sample(model, x, steps, temperature=1.0, sample=False, top_k=None):
 
     return x
 
+
 def fig2tensor(fig):
     """Convert a Matplotlib figure to a PIL Image and return it"""
     buf = io.BytesIO()
@@ -91,9 +138,11 @@ def fig2tensor(fig):
     img = Image.open(buf).convert("RGB")
     return TF.to_tensor(img)
 
+
 def make_number_grid(encodings):
     B = encodings.shape[0]
     return torch.stack([number_matrix(encodings[i]) for i in range(B)],dim=0)
+
 
 def number_matrix(encoding, size=(512,512)):
     # Open image file
@@ -145,18 +194,7 @@ def set_seed(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
-
-def init_process(rank=0, size=1, backend='nccl', init_method="tcp://127.0.0.1:23456"):
-    """ Initialize the distributed environment. """
-    torch.distributed.init_process_group(backend,
-                                         rank=rank,
-                                         world_size=size,
-                                         init_method=init_method)
-
-
-def cleanup():
-    torch.distributed.destroy_process_group()
+    torch.backends.cudnn.benchmark = True
 
 
 def worker_init_fn(worker_id, rank=0):
@@ -165,5 +203,90 @@ def worker_init_fn(worker_id, rank=0):
 
 class ConfigDict(object):
     def __init__(self, my_dict):
+        self._initial_dict = my_dict
         for key in my_dict:
             setattr(self, key, my_dict[key])
+
+
+def save_checkpoint(state, filename='checkpoint.pth.tar'):
+    torch.save(state, filename)
+
+
+def flags_to_path(FLAGS):
+    root = os.path.join(FLAGS.vis_root, FLAGS.datatype, FLAGS.modeltype)
+
+    if "VQVAE" in FLAGS.modeltype:
+        path = os.path.join(root,
+                            (f"beta_{FLAGS.beta}_ncodes_{FLAGS.n_codes}_"
+                             f"ldim_{FLAGS.n_latent}_dim_{FLAGS.h_dim}_"
+                             f"lr_{FLAGS.lr}")
+                            )
+    elif FLAGS.modeltype == 'FilterModel':
+        path = os.path.join(root, FLAGS.lex_vae_type,
+                            (f"dim_{FLAGS.n_latent}_"
+                             f"lr_{FLAGS.lr}_"
+                             f"beta_{FLAGS.beta}")
+                            )
+    else:
+        path = os.path.join(root,
+                            (f"beta_{FLAGS.beta}_ldim_{FLAGS.n_latent}_"
+                             f"dim_{FLAGS.h_dim}"
+                             f"_lr_{FLAGS.lr}")
+                            )
+    return path
+
+
+def get_tensorboard_writer(path):
+    if not hasattr(hlog, 'tb_writer'):
+        hlog.tb_writer = SummaryWriter(path)
+    return hlog.tb_writer
+
+
+
+def flags_to_args():
+    flags_dict = {k: v.value for k, v in FLAGS.__flags.items()}
+    return ConfigDict(flags_dict)
+
+
+def resume(model, args, mark='epoch', load_optims=True):
+    optimizer = None
+    scheduler = None
+    
+    if args.resume != '':
+        if load_optims:
+            optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        
+        if load_optims and args.warmup_steps != -1:    
+            scheduler = NoamLR(optimizer, args.rnn_dim, warmup_steps=args.warmup_steps)    
+            
+        if os.path.isfile(args.resume):
+            print("=> loading checkpoint '{}'".format(args.resume))
+            if args.gpu is None:
+                checkpoint = torch.load(args.resume)
+            else:
+                # Map model to be loaded to specified single gpu.
+                loc = 'cuda:{}'.format(args.gpu)
+                checkpoint = torch.load(args.resume, map_location=loc)
+            if not isinstance(checkpoint, dict):
+                checkpoint = {'state_dict': checkpoint.state_dict()}
+            setattr(args, f'start_{mark}', checkpoint.get(mark, 0))
+            try:
+                model.load_state_dict(checkpoint['state_dict'])
+            except RuntimeError:
+                model.module.load_state_dict(checkpoint['state_dict'])
+
+            if load_optims and 'optimizer' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                
+            if load_optims and 'scheduler' in checkpoint and scheduler is not None:
+                scheduler.load_state_dict(checkpoint['scheduler'])
+
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, checkpoint.get(mark, 0)))
+            del checkpoint
+        else:
+            print("=> no checkpoint found at '{}'".format(args.resume))
+    else:
+        print("Initialized the model from scratch")
+    return optimizer, scheduler
+

@@ -10,7 +10,7 @@ from PIL import Image
 import math
 import re
 from seq2seq import Vocab
-from absl import logging
+from seq2seq import hlog
 
 
 def get_digits(n, b, k=4):
@@ -63,7 +63,7 @@ def preprocess_scan(folder="scan/images"):
 
 
 class SCANDataset(object):
-    def __init__(self, root="data/scan/", split="train", transform=None, vocab=None, color="HSV", size=(80,80)):
+    def __init__(self, root="data/scan/", split="train", transform=None, vocab=None, color="HSV", size=(80, 80), **kwargs):
         self.root = root
         self.split = split
         self.color = color
@@ -85,7 +85,7 @@ class SCANDataset(object):
             self.vocab = vocab
 
         random.shuffle(self.annotations)
-        logging.info(f"{split}: {len(self.annotations)}")
+        hlog.log(f"{split}: {len(self.annotations)}")
 
         if transform is None:
             T = transforms.ToTensor()

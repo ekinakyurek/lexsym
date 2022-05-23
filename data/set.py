@@ -8,10 +8,10 @@ from torch.nn.utils.rnn import pad_sequence
 import torchvision.transforms as transforms
 from PIL import Image
 from seq2seq import Vocab
-from absl import logging
+from seq2seq import hlog
 
 class SetDataset(object):
-    def __init__(self, root="data/setpp/", split="train", transform=None, vocab=None, color="RGB", size=(64, 64)):
+    def __init__(self, root="data/setpp/", split="train", transform=None, vocab=None, color="RGB", size=(64, 64), **kwargs):
         self.root = root
         self.split = split
         self.color = color
@@ -32,7 +32,7 @@ class SetDataset(object):
             self.vocab = vocab
 
         random.shuffle(self.annotations)
-        logging.info(f"{split}: {len(self.annotations)}")
+        hlog.log(f"{split}: {len(self.annotations)}")
 
         if transform is None:
             T = transforms.ToTensor()
@@ -64,7 +64,8 @@ class SetDataset(object):
         annotation = self.annotations[i]
         img_file = annotation["image"]
         # desc = annotation["text"].split(" , ")
-        image = self.transform(Image.open(os.path.join(self.root,  img_file)).convert(self.color))
+        img_file = os.path.join(self.root,  img_file)
+        image = self.transform(Image.open(img_file).convert(self.color))
         # return [d.split() for d in desc], image
         return annotation["text"].split(), image, img_file
 

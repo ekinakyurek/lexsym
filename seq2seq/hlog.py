@@ -20,7 +20,7 @@ logger = logging.getLogger('hlog')  # Loggerr
 # logger.handlers[0].stream = sys.stdout
 logger.propagate = False
 
-print(logger.handlers)
+# print(logger.handlers)
 
 state = threading.local()
 state.path = []

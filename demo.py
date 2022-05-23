@@ -1,63 +1,77 @@
+import sys
+import os
+import io
+import base64
+import json
+from seq2seq import hlog
+from flask import Flask
+from flask import render_template, request
+
+import numpy as np
+
 import torch
 from torch.utils.data import DataLoader
 import torchvision
-from torchvision.utils import make_grid, save_image
-from absl import app, flags
-FLAGS = flags.FLAGS
-from main import flags_to_path, device
-from src.utils import set_seed
-from main import VectorQuantizedVAE, CLEVRDataset, SetDataset, ShapeDataset, SCANDataset
-from flask import Flask, render_template, request, jsonify
-from absl import app as fapp
-import os
-import io, base64
-import json
-import numpy as np
-import sys
+from torchvision.utils import make_grid
+from torch import nn
 
+from absl import flags
+
+import options
+import vae_train
+from seq2seq import Vocab
+from src import utils
+from src import lexutils
+from src.datasets import get_data
+from src.vqvae import VectorQuantizedVAE
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string("lex_and_swaps_path", default='',
+                    help='A prelearned lexicon path to be used in text-image '
+                         'vqvae models')
+
+flags.DEFINE_string('vae_path', default='',
+                    help='A pretrained vae path for conditional vae models.')
 
 app = Flask(__name__)
 
 
-def init_fn(args):
-    set_seed(FLAGS.seed)
-
-    if FLAGS.datatype == "setpp":
-        train = SetDataset("data/setpp/", split="train")
-        test = SetDataset("data/setpp/", split="test", transform=train.transform, vocab=train.vocab)
-    elif FLAGS.datatype == "shapes":
-        train = ShapeDataset("data/shapes/", split="train")
-        test = ShapeDataset("data/shapes/", split="test", transform=train.transform, vocab=train.vocab)
-    elif FLAGS.datatype == "clevr":
-        train = CLEVRDataset("data/clevr/", split="trainA")
-        test = CLEVRDataset("data/clevr/", split="valB", transform=train.transform, vocab=train.vocab)
-    else:
-        train = SCANDataset("data/scan/", split="train")
-        test = SCANDataset("data/scan/", split="test", transform=train.transform, vocab=train.vocab)
-
-    vis_folder = flags_to_path()
+def init_fn(_):
+    args = utils.flags_to_args()
+    vis_folder = utils.flags_to_path(args)
+    img_size = tuple(map(int, args.imgsize.split(',')))
+    train, val, test = get_data(size=img_size, img2code=True)
     os.makedirs(vis_folder, exist_ok=True)
     print("vis folder:", vis_folder)
 
-    if FLAGS.modeltype == "VQVAE":
+
+    if args.modeltype == "VQVAE":
         model = VectorQuantizedVAE(3,
-                                   FLAGS.h_dim,
-                                   FLAGS.n_latent,
-                                   n_codes=FLAGS.n_codes,
-                                   cc=FLAGS.commitment_cost,
-                                   decay=FLAGS.decay,
-                                   epsilon=FLAGS.epsilon,
-                                   beta=FLAGS.beta,
+                                   args.h_dim,
+                                   args.n_latent,
+                                   n_codes=args.n_codes,
+                                   cc=args.commitment_cost,
+                                   decay=args.decay,
+                                   epsilon=args.epsilon,
+                                   beta=args.beta,
                                    cmdproc=False,
                                    size=train.size,
-                                   ).to(device)
-        model.load_state_dict(torch.load(FLAGS.vae_path).state_dict())
+                                   )
+        model = nn.DataParallel(model)
+        utils.resume(model, args, mark='iter')
+        model = model.module
+        model.to(utils.device())
         model.eval()
     else:
-        raise ValueError(f"Model type {FLAGS.modeltype} not available for this")
-    with open(FLAGS.lex_path, "r") as f:
-        matchings = json.load(f)
-    return model, train, test, vis_folder, matchings
+        raise ValueError(f"Model type {args.modeltype} not available for this")
+    
+    if args.lex_and_swaps_path is not None:
+        with open(args.lex_and_swaps_path) as f:
+            lexicon = json.load(f)
+        hlog.log(f'Lex and Swaps:\n{lexicon}')
+
+    return model, train, val, test, vis_folder, lexicon
 
 
 def img2str(img):
@@ -69,20 +83,24 @@ def img2str(img):
 
 def encode_next():
     cmd, img, names = next(generator)
-    img = img.to(device)
-    cmd = cmd.to(device)
-    _, recon, _, _, _, encodings = model(img, cmd)
+    cmd = cmd.transpose(0, 1)
+    img = img.to(utils.device())
+    cmd = cmd.to(utils.device())
+    _, recon, _, _, _, encodings = model(**dict(img=img, cmd=cmd))
     recon = recon.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
+    recon = recon.clip_(0, 1)
     encodings = encodings.flatten().cpu().tolist()
     img = T(make_grid(recon)).convert("RGB")
-    return img2str(img), encodings
+    cmd = " ".join(train.vocab.decode(cmd.cpu().flatten().numpy()))
+    return img2str(img), encodings, cmd
 
 
 @app.route('/get_next', methods=['GET', 'POST'])
 def get_next():
-    img, encodings = encode_next()
+    img, encodings, QA = encode_next()
     data = {"img": img,
             "encodings": encodings,
+            "QA": QA,
             "matchings": app.config['MATCHINGS']}
     # print(data)
     return json.dumps(data)
@@ -91,7 +109,7 @@ def get_next():
 @app.route('/decode', methods=['GET', 'POST'])
 def decode():
     encodings = np.array([int(request.form['cell'+str(i)]) for i in range(app.config['GRID_SIZE']**2)])
-    encodings = torch.from_numpy(encodings).to(device)
+    encodings = torch.from_numpy(encodings).to(utils.device())
     encodings = encodings.view(1, -1)
     print(encodings)
     quantized = model.codebook1._embedding(encodings)  # B,HW,C
@@ -99,8 +117,42 @@ def decode():
     z_rnn = quantized.transpose(1, 2).contiguous().view(1, C, app.config['GRID_SIZE'], app.config['GRID_SIZE'])
     recon = model.decode(z_rnn)
     recon = recon.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
+    recon = recon.clip_(0, 1)
     img = T(make_grid(recon)).convert("RGB")
     return json.dumps({"img": img2str(img)})
+
+
+def get_dummy_question_answer(QA):
+    QA = torch.tensor(train.vocab.encode(QA.split()))
+    return QA
+
+
+@app.route('/swap', methods=['POST'])
+def swap():
+    encodings = np.array([int(request.form['cell'+str(i)]) for i in range(app.config['GRID_SIZE']**2)])
+    encodings = torch.from_numpy(encodings)
+    encodings = encodings.view(1, -1)
+    print("Before swap (encodings):", encodings)
+    QA = get_dummy_question_answer(request.form['QA'])
+    print("Before swap:", request.form['QA'])
+    utils.set_seed(0)
+    lexutils.random_swap(app.config['LEXICON'], QA, train.vocab, QA.clone(), train.vocab, encodings)
+    print("After swap:", encodings)
+    QA = " ".join(train.vocab.decode(QA.cpu().flatten().numpy()))
+    print("After swap:", QA)
+    encodings = encodings.to(utils.device())
+    quantized = model.codebook1._embedding(encodings)  # B,HW,C
+    C = quantized.shape[-1]
+    z_rnn = quantized.transpose(1, 2).contiguous().view(1, C, app.config['GRID_SIZE'], app.config['GRID_SIZE'])
+    recon = model.decode(z_rnn)
+    recon = recon.cpu().data * train.std[None, :, None, None] + train.mean[None, :, None, None]
+    recon = recon.clip_(0, 1)
+    img = T(make_grid(recon)).convert("RGB")
+    data = {"img": img2str(img),
+            "encodings": encodings.flatten().cpu().tolist(),
+            "QA": QA,
+            }
+    return json.dumps(data)
 
 
 @app.route('/')
@@ -111,12 +163,15 @@ def index():
 
 if __name__ == "__main__":
     flags.FLAGS(sys.argv)
-    model, train, test, vis_folder, matchings = init_fn(sys.argv)
+    model, train, val, test, vis_folder, lexicon = init_fn(sys.argv)
     test_loader = DataLoader(train, batch_size=1, shuffle=False, collate_fn=train.collate)
     generator = iter(test_loader)
     T = torchvision.transforms.ToPILImage(mode=train.color)
     app.config['VIS_FOLDER'] = vis_folder
-    app.config['DATA_FOLDER'] = os.path.join(test.root, "images", test.split)
+    app.config['DATA_FOLDER'] = os.path.join(train.root, "images", train.split)
     app.config['GRID_SIZE'] = model.latent_shape[1]
-    app.config['MATCHINGS'] = matchings
-    app.run(host='0.0.0.0', port=6635);
+    lexicon['lexicon'] = {k: v for k, v in lexicon['lexicon'].items() if k in ("green", "red")}
+    lexicon['swapables'] = {k: ["green"] if k == "red" else ["red"]  for k, v in lexicon['swapables'].items() if k in ("green", "red")}
+    app.config['MATCHINGS'] = lexicon['lexicon'] 
+    app.config['LEXICON'] = lexicon
+    app.run(host='0.0.0.0', port=6632)

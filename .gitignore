@@ -6,6 +6,15 @@ __pycache__/
 # C extensions
 *.so
 
+**/images/
+**/vis*/
+exp_rnn_cond/
+logs/
+data/clevr
+data/WikiTableQuestions
+*.tar.gz
+*.err
+
 # Distribution / packaging
 .Python
 build/

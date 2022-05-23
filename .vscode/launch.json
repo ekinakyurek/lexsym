@@ -1,0 +1,61 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.1.0",
+    "configurations": [
+        {
+            "name": "clevr-Demo",
+            "type": "python",
+            "request": "launch",
+            "program": "demo.py",
+            "envFile": ".env",
+            "debugOptions": [
+                "RedirectOutput"
+            ],
+            "args": [
+                "run",
+                "--seed=0",
+                "--h_dim=128",
+                "--beta=1.0",
+                "--lr=0.0003",
+                "--vis_root=visv2",
+                "--n_latent=64",
+                "--n_codes=32",
+                "--vae_path=visv2/clevr/VQVAE/beta_1.0_ncodes_32_ldim_64_dim_128_lr_0.0003/checkpoint.pth.tar",
+                "--lex_path=visv2/clevr/VQVAE/beta_1.0_ncodes_32_ldim_64_dim_128_lr_0.0003/diag.align.json",
+                "--resume=visv2/clevr/VQVAE/beta_1.0_ncodes_32_ldim_64_dim_128_lr_0.0003/checkpoint.pth.tar",
+                "--datatype=clevr"
+            ],
+        },{
+            "name": "vqa_train",
+            "type": "python",
+            "request": "launch",
+            "program": "vqa_train.py",
+            "envFile": ".env",
+            "debugOptions": [
+                "RedirectOutput"
+            ],
+            "args": [
+                "--h_dim=128",
+                "--rnn_dim=256",
+                "--n_latent=64",
+                "--n_batch=512",
+                "--visualize_every=1",
+                "--n_iter=200000",
+                "--n_workers=16",
+                "--seed=0",
+                "--vis_root=vis_vqa",
+                "--lr=1.0",
+                "--resume=''",
+                "--n_codes=32",
+                "--beta=1.0",
+                "--datatype=clevr",
+                "--modeltype=VQA",
+                "--vae_path=visv2/clevr/VQVAE/beta_1.0_ncodes_32_ldim_64_dim_128_lr_0.0003/checkpoint.pth.tar",
+                "--lex_path=visv2/clevr/VQVAE/beta_1.0_ncodes_32_ldim_64_dim_128_lr_0.0003/diag.align.json",
+                "--code_files=visv2/clevr/VQVAE/beta_1.0_ncodes_32_ldim_64_dim_128_lr_0.0003/train_encodings.txt,visv2/clevr/VQVAE/beta_1.0_ncodes_32_ldim_64_dim_128_lr_0.0003//test_encodings.txt",
+                "--warmup_steps=10000",
+            ]
+        }
+}
