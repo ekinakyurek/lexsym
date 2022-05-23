@@ -6,7 +6,10 @@
         "**/.git/subtree-cache/**": true,
         "**/node_modules/*/**": true,
         "**/images/": true
+      },
+      "[markdown]": {
+        "files.trimTrailingWhitespace": false
       }
-      
-    
+
+
 }
