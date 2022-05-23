@@ -16,13 +16,13 @@ def main(_):
     lexicon, inputs = lexutils.load_lexicon(FLAGS.lexfile, FLAGS.codefile)
     filtered_lexicon, swapables = lexutils.filter_lexicon_v2(lexicon, inputs)
     lex = {"lexicon": filtered_lexicon, "swapables": swapables}
-    
+
     for k in list(lex["swapables"].keys()):
         if len(lex["swapables"][k]) == 0:
             del lex["swapables"][k]
             del lex["lexicon"][k]
 
-    with open(FLAGS.lexfile.replace(".json", "-swaps.json"), "w") as f:
+    with open(FLAGS.lexfile.replace(".json", "-swaps-v2.json"), "w") as f:
         json.dump(lex, f)
 
 

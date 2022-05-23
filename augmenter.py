@@ -34,7 +34,7 @@ def masked_fill_(array, mask, value):
     for i, m in enumerate(mask):
         if m:
             array[i] = value
-    
+
 
 def swap_ids(tensor, id1, id2, substitute=False):
     if substitute:
@@ -47,7 +47,7 @@ def swap_ids(tensor, id1, id2, substitute=False):
 
 def make_a_swap_single(inp, out, lex_and_swaps, steps=0, substitute=False):
     lexicon, swapables = lex_and_swaps['lexicon'], lex_and_swaps['swapables']
-    
+
     keys = list(filter(lambda k: k in inp, lexicon.keys()))
 
     if len(keys) != 0:
@@ -57,10 +57,10 @@ def make_a_swap_single(inp, out, lex_and_swaps, steps=0, substitute=False):
         ks = [k1, k2]
     else:
         return
-        
-    ks_q_id = ks    
+
+    ks_q_id = ks
     swap_ids(inp, *ks_q_id, substitute=substitute)
-    
+
     if substitute:
         for v, _ in lexicon[ks[0]].items():
             code2 = random.choice(list(lexicon[ks[1]].keys()))
@@ -80,18 +80,30 @@ def make_a_swap_single(inp, out, lex_and_swaps, steps=0, substitute=False):
 
 def main(_):
     lex = json.load(open(FLAGS.lexfile))
-    for k, v in lex["swapables"].items():
-        lex["swapables"][k] = np.unique(v).tolist()
-    for k in list(lex["swapables"].keys()):
-        if len(lex["swapables"][k]) == 0:
-            del lex["swapables"][k]
-            del lex["lexicon"][k]
+    # for k, v in lex["swapables"].items():
+    #     lex["swapables"][k] = np.unique(v).tolist()
+
+    # for k in list(lex["swapables"].keys()):
+    #     if len(lex["swapables"][k]) == 0:
+    #         del lex["swapables"][k]
+    #         if k in lex["lexicon"]:
+    #             del lex["lexicon"][k]
+    #     else:
+    #         if k not in lex["lexicon"]:
+    #             del lex["swapables"][k]
+    #         for ki, vi in lex["swapables"].items():
+    #             try:
+    #                 idx = vi.index(k)
+    #                 del vi[idx]
+    #             except:
+    #                 pass
+    # pdb.set_trace()
     # print(lex["lexicon"])
-    inputs, outputs = read_file(FLAGS.trainfile, seperator='\t')
+    inputs, outputs = read_file(FLAGS.trainfile, seperator=' ||| ')
     test_inputs, test_outputs = read_file(FLAGS.testfile, seperator='\t')
     test_inputs = [" ".join(x) for x in test_inputs]
     test_outputs = [" ".join(x) for x in test_outputs]
-    
+
     train_outputs = set([" ".join(x) for x in outputs])
     train_inputs = set([" ".join(x) for x in inputs])
     test_inputs_set = set(test_inputs)
@@ -110,9 +122,9 @@ def main(_):
             if aug_inp not in generated and aug_out not in train_outputs and aug_inp not in train_inputs:
                 generated.add(aug_inp)
                 print(aug_inp, "\t", aug_out, '\t', inp, '\t', out)
-            if len(generated) > 1000:
+            if len(generated) > 2500:
                 break
-        if len(generated) > 1000:
+        if len(generated) > 2500:
             break
 
 
