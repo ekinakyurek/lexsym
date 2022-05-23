@@ -37,7 +37,6 @@ for clevr_type in "clevr"; do
                         vqa_folder="${vqa_root}/${datatype}/${modeltype}/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}"
                         vae_folder="${vae_root}/${datatype}/VQVAE/beta_${beta}_ncodes_${n_codes}_ldim_${n_latent}_dim_${h_dim}_lr_${lr}"
                         vae_path="${vae_folder}/checkpoint.pth.tar"
-                        
 
                         mkdir -p $vqa_folder/logs
                         mkdir -p $vae_folder/logs
@@ -45,23 +44,23 @@ for clevr_type in "clevr"; do
                         echo ${vqa_folder}
                         echo ${vae_folder}
 
-                        # PYTHONHASHSEED=${seed} python -u vae_train.py \
-                        # --seed ${seed} \
-                        # --n_batch ${n_batch} \
-                        # --n_latent ${n_latent} \
-                        # --n_codes ${n_codes} \
-                        # --n_iter ${vae_iter} \
-                        # --h_dim ${h_dim} \
-                        # --modeltype ${modeltype_vae} \
-                        # --datatype ${datatype} \
-                        # --lr ${lr} \
-                        # --gaccum 1 \
-                        # --beta ${beta} \
-                        # --n_workers ${n_workers} \
-                        # --vis_root ${vae_root} \
-                        # --imgsize ${imgsize} \
-                        # --dataroot ${dataroot} \
-                        # --visualize_every 1000 > $vae_folder/logs/eval.out 2> $vae_folder/logs/eval.err
+                        PYTHONHASHSEED=${seed} python -u vae_train.py \
+                        --seed ${seed} \
+                        --n_batch ${n_batch} \
+                        --n_latent ${n_latent} \
+                        --n_codes ${n_codes} \
+                        --n_iter ${vae_iter} \
+                        --h_dim ${h_dim} \
+                        --modeltype ${modeltype_vae} \
+                        --datatype ${datatype} \
+                        --lr ${lr} \
+                        --gaccum 1 \
+                        --beta ${beta} \
+                        --n_workers ${n_workers} \
+                        --vis_root ${vae_root} \
+                        --imgsize ${imgsize} \
+                        --dataroot ${dataroot} \
+                        --visualize_every 1000 > $vae_folder/logs/eval.out 2> $vae_folder/logs/eval.err
 
                         PYTHONHASHSEED=${seed} python -u img2code.py \
                         --seed ${seed} \
@@ -95,37 +94,37 @@ for clevr_type in "clevr"; do
                         python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/reverse.align.o
                         python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/diag.align.o
                         python seq2seq/utils/summarize_aligned_data.py ${vae_folder}/train_encodings.fast ${vae_folder}/grow-diag.align.o
-                        
+
                         python lex_and_swaps.py --lexfile ${vae_folder}/diag.align.o.json --codefile ${vae_folder}/train_encodings.txt
                         python lex_and_swaps.py --lexfile ${vae_folder}/diag.align.json --codefile ${vae_folder}/train_encodings.txt
-                                
+
                         lex_and_swaps_path=${vae_folder}/diag.align-swaps.json
 
             	    	code_root=${vae_folder}
-    
-                        # PYTHONHASHSEED=${seed} python -u vqa_train.py \
-                        # --seed ${seed} \
-                        # --n_batch ${n_batch} \
-                        # --n_latent ${n_latent} \
-                        # --n_codes ${n_codes} \
-                        # --h_dim ${h_dim} \
-                        # --beta ${beta} \
-                        # --n_iter ${vqa_iter} \
-                        # --modeltype ${modeltype_vqa} \
-                        # --datatype ${datatype} \
-                        # --vae_path ${vae_path} \
-                        # --vis_root ${vqa_root} \
-                        # --code_files "${code_root}/train_encodings.txt,${code_root}/test_encodings.txt,${code_root}/val_encodings.txt" \
-                        # --imgsize ${imgsize} \
-                        # --n_workers ${n_workers} \
-            			# --lex_and_swaps_path ${lex_and_swaps_path} \
-                        # --lr ${vqa_lr} \
-                        # --gclip 5.0 \
-                 		# --rnn_dim 512 \
-				        # --warmup_steps 16000 \
-                        # --gaccum 4 \
-                        # --dataroot ${dataroot} \
-                        # --visualize_every 5000 > ${vqa_folder}/eval.err 2> ${vqa_folder}/eval.out
+
+                        PYTHONHASHSEED=${seed} python -u vqa_train.py \
+                        --seed ${seed} \
+                        --n_batch ${n_batch} \
+                        --n_latent ${n_latent} \
+                        --n_codes ${n_codes} \
+                        --h_dim ${h_dim} \
+                        --beta ${beta} \
+                        --n_iter ${vqa_iter} \
+                        --modeltype ${modeltype_vqa} \
+                        --datatype ${datatype} \
+                        --vae_path ${vae_path} \
+                        --vis_root ${vqa_root} \
+                        --code_files "${code_root}/train_encodings.txt,${code_root}/test_encodings.txt,${code_root}/val_encodings.txt" \
+                        --imgsize ${imgsize} \
+                        --n_workers ${n_workers} \
+            			--lex_and_swaps_path ${lex_and_swaps_path} \
+                        --lr ${vqa_lr} \
+                        --gclip 5.0 \
+                 		--rnn_dim 512 \
+				        --warmup_steps 16000 \
+                        --gaccum 4 \
+                        --dataroot ${dataroot} \
+                        --visualize_every 5000 > ${vqa_folder}/eval.err 2> ${vqa_folder}/eval.out
                     fi
                 done
             done
